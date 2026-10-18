@@ -1,0 +1,9 @@
+{
+  "functions": { "api/*.js": { "maxDuration": 10 } },
+  "rewrites": [
+    { "source": "/api/bundles", "destination": "/api/publish" },
+    { "source": "/s/:id/manifest.json", "destination": "/api/read?id=:id&format=json" },
+    { "source": "/s/:id/AGENT_SETUP.md", "destination": "/api/read?id=:id&format=markdown" },
+    { "source": "/s/:id", "destination": "/api/read?id=:id&format=html" }
+  ]
+}

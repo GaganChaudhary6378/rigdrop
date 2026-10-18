@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Agent Setup Link</title>
+  <meta name="description" content="Package and share Claude Code and Codex setups through one inspectable link.">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body><main>
+  <p class="eyebrow">PORTABLE AGENT CONFIGURATION</p>
+  <h1>Share your agent setup with one link.</h1>
+  <p class="lede">Bundle skills, plugins, MCP definitions, and rules. Your teammate inspects the exact changes before installing them.</p>
+  <section class="flow"><span>Scan</span><i>→</i><span>Publish</span><i>→</i><span>Inspect</span><i>→</i><span>Install</span></section>
+  <section>
+    <h2>Publish a bundle</h2>
+    <form id="publish-form">
+      <label>Publishing token<input id="token" type="password" autocomplete="off" required></label>
+      <label>Bundle JSON<input id="bundle" type="file" accept="application/json,.json" required></label>
+      <button type="submit">Create public link</button>
+    </form>
+    <p id="result" role="status"></p>
+  </section>
+  <section><h2>CLI workflow</h2><pre><code>agent-setup scan --out team.bundle.json
+agent-setup publish team.bundle.json</code></pre></section>
+  <p class="muted">Secret values are removed before publishing. Every receiver sees a preview before installation.</p>
+  <script src="/app.js" defer></script>
+</main></body></html>

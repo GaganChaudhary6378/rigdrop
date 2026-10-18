@@ -1,0 +1,11 @@
+node_modules/
+coverage/
+dist/
+*.bundle.json
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.DS_Store
+.agent-setup-link/

@@ -1,0 +1,94 @@
+format_version: 1
+
+bundle:
+  slug: gagan-web-stack
+  version: 1.0.0
+  title: Gagan's web agent setup
+  description: Shared skills, plugins, MCP definitions, and rules for web projects.
+  visibility: public
+  created_at: "2026-10-18T00:00:00Z"
+
+compatibility:
+  operating_systems: [macos, linux]
+  agents:
+    - id: claude-code
+      version: ">=1"
+    - id: codex
+      version: ">=1"
+
+requirements:
+  runtimes:
+    - name: node
+      version: ">=22"
+  secrets:
+    - name: SUPABASE_ACCESS_TOKEN
+      description: Personal token required by the Supabase MCP server.
+      required_by: [mcp.supabase]
+
+skills:
+  - id: ponytail
+    targets: [claude-code, codex]
+    source:
+      kind: git
+      repository: https://github.com/DietrichGebert/ponytail.git
+      commit: REPLACE_WITH_FULL_COMMIT_SHA
+      path: skills/ponytail
+
+  - id: local-review-checklist
+    targets: [claude-code, codex]
+    source:
+      kind: embedded
+      path: payload/skills/local-review-checklist
+      sha256: REPLACE_WITH_SHA256
+
+plugins:
+  - id: caveman
+    targets: [claude-code]
+    source:
+      kind: git
+      repository: https://github.com/JuliusBrussee/caveman.git
+      commit: REPLACE_WITH_FULL_COMMIT_SHA
+      path: .
+
+mcp_servers:
+  - id: supabase
+    targets: [claude-code, codex]
+    transport: stdio
+    command: npx
+    args:
+      - --yes
+      - "@supabase/mcp-server-supabase@REPLACE_WITH_VERSION"
+    environment:
+      SUPABASE_ACCESS_TOKEN:
+        from_secret: SUPABASE_ACCESS_TOKEN
+    source:
+      kind: package
+      registry: npm
+      package: "@supabase/mcp-server-supabase"
+      version: REPLACE_WITH_VERSION
+
+rules:
+  - id: personal-working-preferences
+    scope: global
+    targets:
+      - agent: claude-code
+        destination: CLAUDE.md
+      - agent: codex
+        destination: AGENTS.md
+    source:
+      kind: embedded
+      path: payload/rules/personal-working-preferences.md
+      sha256: REPLACE_WITH_SHA256
+
+commands: []
+hooks: []
+
+install_policy:
+  conflict_default: keep_existing
+  require_preview: true
+  require_backup: true
+  allow_bundle_scripts: false
+  verify_after_install: true
+
+integrity:
+  payload_sha256: REPLACE_WITH_SHA256
