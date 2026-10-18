@@ -49,6 +49,8 @@ npx --yes github:GaganChaudhary6378/rigdrop share
 
 `share` scans the setup, creates a temporary bundle, publishes it, prints one unique public link, then removes the temporary bundle. The local `.env.local` file is ignored by Git. Never commit it or paste its token into a bundle.
 
+Before upload, `share` lists every included file, its size, the total upload size, Git references, and excluded paths. Use `e` to remove file numbers for that one share, `--dry-run` to review without upload, or `--yes` for a noninteractive upload.
+
 Anyone with the link can read embedded local files, so use the advanced two-step flow when you want to inspect before publishing:
 
 ```sh

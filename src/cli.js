@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { doctor, install, loadBundle, plan, publish, rollback, scan, share } from "./core.js";
+import { createInterface } from "node:readline/promises";
+import { stdin, stdout } from "node:process";
+import { bundleReview, doctor, install, loadBundle, omitBundleFiles, plan, publish, publishBundle, rollback, scan } from "./core.js";
 
 const [command, ...rest] = process.argv.slice(2);
 const noInputCommands = ["scan", "share", "doctor"];
@@ -21,6 +23,36 @@ function summary(bundle) {
   if (skipped.length) console.log(`Skipped ${skipped.length} non-portable or oversized file(s): ${skipped.join(", ")}`);
 }
 
+const formatBytes = bytes => bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 1024 * 1024 ? 1 : 2)} ${bytes < 1024 * 1024 ? "KB" : "MB"}`;
+const printReview = bundle => {
+  const review = bundleReview(bundle);
+  console.log("\nFiles to upload:");
+  review.files.forEach((file, index) => console.log(`${index + 1}. ${file.path} (${formatBytes(file.bytes)})`));
+  console.log(`\n${review.files.length} file(s), ${formatBytes(review.bundleBytes)} total upload`);
+  if (review.references.length) {
+    console.log("\nGit references (not uploaded):");
+    for (const reference of review.references) console.log(`- ${reference.path} <- ${reference.repository}@${reference.commit.slice(0, 12)}:${reference.sourcePath}`);
+  }
+  if (review.skipped.length) {
+    console.log("\nExcluded during scan:");
+    for (const file of review.skipped) console.log(`- ${file.path} (${file.reason})`);
+  }
+  return review;
+};
+
+function selectedNumbers(answer, files) {
+  const indexes = new Set();
+  for (const part of answer.split(",").map(value => value.trim()).filter(Boolean)) {
+    const range = part.match(/^(\d+)(?:-(\d+))?$/);
+    if (!range) throw new Error("Use file numbers such as 2,5-8");
+    const start = Number(range[1]);
+    const end = Number(range[2] || range[1]);
+    if (start < 1 || end < start || end > files.length) throw new Error("Selected file number is outside the review list");
+    for (let index = start; index <= end; index += 1) indexes.add(index - 1);
+  }
+  return [...indexes].map(index => files[index].path);
+}
+
 async function main() {
   if (command === "scan") {
     const out = value("--out") || "agent-setup.bundle.json";
@@ -31,15 +63,38 @@ async function main() {
     return;
   }
   if (command === "share") {
-    const result = await share({
+    let bundle = await scan({
       project: value("--project"),
-      title: value("--title"),
-      registry: value("--registry"),
-      token: process.env.AGENT_SETUP_PUBLISH_TOKEN
+      title: value("--title")
     });
-    summary(result.bundle);
-    console.log(`\nShared setup: ${result.page}`);
-    console.log(`Paste this link into an agent: ${result.page}/AGENT_SETUP.md`);
+    summary(bundle);
+    let review = printReview(bundle);
+    if (has("--dry-run")) {
+      console.log("\nDry run complete. Nothing uploaded.");
+      return;
+    }
+    if (!has("--yes")) {
+      const prompt = createInterface({ input: stdin, output: stdout });
+      try {
+        for (;;) {
+          const answer = (await prompt.question(`\nUpload ${review.files.length} files (${formatBytes(review.bundleBytes)})? [y/N/e] `)).trim().toLowerCase();
+          if (answer === "y" || answer === "yes") break;
+          if (answer === "e") {
+            const selected = await prompt.question("Remove file numbers for this share (for example 2,5-8), or press Enter to return: ");
+            if (selected.trim()) bundle = omitBundleFiles(bundle, selectedNumbers(selected, review.files));
+            review = printReview(bundle);
+            continue;
+          }
+          console.log("Upload cancelled. Nothing uploaded.");
+          return;
+        }
+      } finally {
+        prompt.close();
+      }
+    }
+    const page = await publishBundle(bundle, { registry: value("--registry"), token: process.env.AGENT_SETUP_PUBLISH_TOKEN });
+    console.log(`\nShared setup: ${page}`);
+    console.log(`Paste this link into an agent: ${page}/AGENT_SETUP.md`);
     return;
   }
   if (command === "inspect") {
@@ -73,7 +128,7 @@ async function main() {
     console.log(await publish(input, { registry: value("--registry"), token: process.env.AGENT_SETUP_PUBLISH_TOKEN }));
     return;
   }
-  console.log("RigDrop\n\nCommands:\n  share [--project PATH] [--title NAME] [--registry URL]\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL\n  install FILE_OR_URL [--project PATH] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  doctor\n  publish BUNDLE_FILE [--registry URL]");
+  console.log("RigDrop\n\nCommands:\n  share [--project PATH] [--title NAME] [--registry URL] [--yes] [--dry-run]\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL\n  install FILE_OR_URL [--project PATH] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  doctor\n  publish BUNDLE_FILE [--registry URL]");
 }
 
 main().catch(error => {

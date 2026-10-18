@@ -6,7 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { gunzipSync } from "node:zlib";
-import { install, rollback, scan, share, validate } from "../src/core.js";
+import { bundleReview, install, omitBundleFiles, rollback, scan, share, validate } from "../src/core.js";
 import { bundleUrls, renderBundlePage, renderInstructions } from "../src/hosted.js";
 
 const exec = promisify(execFile);
@@ -37,6 +37,27 @@ test("scan rejects an embedded private key", async () => {
   await mkdir(join(sender, ".codex/skills/demo"), { recursive: true });
   await writeFile(join(sender, ".codex/skills/demo/SKILL.md"), "-----BEGIN PRIVATE KEY-----\nsecret");
   await assert.rejects(scan({ home: sender }), /Possible secret/);
+});
+
+test("scan excludes sensitive filenames", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-sensitive-filename-"));
+  await mkdir(join(sender, ".codex/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".codex/skills/demo/SKILL.md"), "# Demo\n");
+  await writeFile(join(sender, ".codex/skills/demo/service.pem"), "not a real key\n");
+  const bundle = await scan({ home: sender });
+  assert.deepEqual(bundle.items[0].source.skipped, [{ path: "service.pem", reason: "sensitive filename" }]);
+});
+
+test("review can remove selected files before publishing", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-review-"));
+  await mkdir(join(sender, ".agents/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".agents/skills/demo/SKILL.md"), "# Demo\n");
+  await writeFile(join(sender, ".agents/skills/demo/reference.md"), "# Reference\n");
+  const bundle = await scan({ home: sender });
+  const review = bundleReview(bundle);
+  const edited = omitBundleFiles(bundle, [review.files.find(file => file.path.endsWith("reference.md")).path]);
+  assert.equal(bundleReview(edited).files.length, 1);
+  assert.equal(bundleReview(edited).skipped.at(-1).reason, "removed during review");
 });
 
 test("scan allows the documented AWS example key", async () => {

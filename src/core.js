@@ -11,7 +11,7 @@ const MAX_FILE = 256 * 1024;
 const MAX_BUNDLE = 4 * 1024 * 1024;
 const portableExtensions = new Set([".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".rb", ".go", ".rs", ".java", ".kt", ".swift", ".sql", ".html", ".css", ".xml", ".csv"]);
 const portableNames = new Set(["agents", "claude", "readme", "license", "notice", "changelog", "dockerfile", "makefile"]);
-const deniedNames = /^(\.env(?:\..*)?|auth\.json|credentials(?:\.json)?|cookies?|id_(?:rsa|ed25519)(?:\.pub)?)$/i;
+const deniedNames = /^(\.env(?:\..*)?|auth\.json|credentials(?:\.json)?|cookies?|id_(?:rsa|ed25519)(?:\.pub)?|.+\.(?:pem|key|p12|pfx))$/i;
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
   /\bgh[opsu]_[A-Za-z0-9_]{30,}\b/,
@@ -42,6 +42,7 @@ const decodeEmbeddedFile = file => {
   if (content.length > MAX_FILE) throw new Error(`Embedded file exceeds ${MAX_FILE} bytes: ${file.path}`);
   return content;
 };
+const embeddedFilePath = (item, file) => `${item.destination}/${file.path}`.replace(/\/+/g, "/");
 const runGit = async (cwd, ...args) => (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
 
 async function gitSource(path) {
@@ -86,7 +87,10 @@ async function embeddedSource(root, allowedRoots = [dirname(root)]) {
       entry = await stat(current);
     }
     if (entry.isFile()) {
-      if (deniedNames.test(basename(path))) throw new Error(`Refusing sensitive file: ${path}`);
+      if (deniedNames.test(basename(path))) {
+        skipped.push({ path: safeRelative(prefix || basename(path)), reason: "sensitive filename" });
+        return;
+      }
       if (entry.size > MAX_FILE) {
         skipped.push({ path: safeRelative(prefix || basename(path)), reason: `exceeds ${MAX_FILE} bytes` });
         return;
@@ -106,7 +110,7 @@ async function embeddedSource(root, allowedRoots = [dirname(root)]) {
     if (ancestry.has(canonical)) throw new Error(`Refusing symlink cycle: ${path}`);
     const nextAncestry = new Set(ancestry).add(canonical);
     for (const child of await readdir(current, { withFileTypes: true })) {
-      if ([".git", "node_modules", "dist", "coverage", "build", ".next", ".cache"].includes(child.name) || deniedNames.test(child.name)) continue;
+      if ([".git", "node_modules", "dist", "coverage", "build", ".next", ".cache"].includes(child.name)) continue;
       await walk(join(current, child.name), prefix ? `${prefix}/${child.name}` : child.name, nextAncestry);
     }
   }
@@ -246,6 +250,38 @@ export function validate(bundle) {
     if (item.source?.kind === "git" && !/^[0-9a-f]{40}$/i.test(item.source.commit)) throw new Error(`Unpinned Git source: ${item.id}`);
   }
   return bundle;
+}
+
+export function bundleReview(bundle) {
+  validate(bundle);
+  const files = [];
+  const skipped = [];
+  const references = [];
+  for (const item of bundle.items) {
+    if (item.source?.kind === "embedded") {
+      for (const file of item.source.files) files.push({ itemId: item.id, path: embeddedFilePath(item, file), bytes: decodeEmbeddedFile(file).length });
+      for (const file of item.source.skipped || []) skipped.push({ path: embeddedFilePath(item, file), reason: file.reason });
+    }
+    if (item.source?.kind === "git") references.push({ path: item.destination, repository: item.source.repository, commit: item.source.commit, sourcePath: item.source.path });
+  }
+  return { files, skipped, references, bundleBytes: Buffer.byteLength(JSON.stringify(bundle)) };
+}
+
+export function omitBundleFiles(bundle, selections) {
+  validate(bundle);
+  const selected = new Set(selections);
+  const next = structuredClone(bundle);
+  next.items = next.items.flatMap(item => {
+    if (item.source?.kind !== "embedded") return [item];
+    const removed = item.source.files.filter(file => selected.has(embeddedFilePath(item, file)));
+    item.source.files = item.source.files.filter(file => !selected.has(embeddedFilePath(item, file)));
+    item.source.skipped ||= [];
+    item.source.skipped.push(...removed.map(file => ({ path: file.path, reason: "removed during review" })));
+    return item.source.files.length ? [item] : [];
+  });
+  const { integrity, ...body } = next;
+  next.integrity = { sha256: sha256(JSON.stringify(body)) };
+  return validate(next);
 }
 
 export async function loadBundle(input) {
@@ -390,15 +426,20 @@ export async function publish(bundlePath, { registry = process.env.AGENT_SETUP_R
   return result.page;
 }
 
-export async function share({ home = homedir(), project, title, registry, token } = {}) {
+export async function publishBundle(bundle, { registry, token } = {}) {
+  validate(bundle);
   const directory = await mkdtemp(join(tmpdir(), "rigdrop-share-"));
   const bundlePath = join(directory, "bundle.json");
   try {
-    const bundle = await scan({ home, project, title });
     await writeFile(bundlePath, `${JSON.stringify(bundle, null, 2)}\n`);
     const page = await publish(bundlePath, { registry, token });
-    return { bundle, page };
+    return page;
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+}
+
+export async function share({ home = homedir(), project, title, registry, token } = {}) {
+  const bundle = await scan({ home, project, title });
+  return { bundle, page: await publishBundle(bundle, { registry, token }) };
 }

@@ -33,6 +33,7 @@ Outcome: a local bundle safely reproduces supported settings in another home dir
 - [x] Support shared bundles up to 4 MB across the CLI, API, and registry.
 - [x] Capture only portable text and script files; exclude work assets and build output.
 - [x] Exclude agent caches, staging directories, and synced work folders from automatic sharing.
+- [x] Require file-by-file review before upload, with one-share exclusions and dry-run support.
 - [ ] Apply the Supabase migration and verify the production publish/read/install flow.
 
 Outcome: a sender can share one public URL that another agent can inspect and install.
