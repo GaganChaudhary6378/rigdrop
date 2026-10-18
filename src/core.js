@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { gunzipSync, gzipSync } from "node:zlib";
+import { commandText, detectSources, gitSource, isWithin, sourceCommands, sourceCount, validateSource } from "./sources.js";
 
 const exec = promisify(execFile);
 const MAX_FILE = 256 * 1024;
@@ -43,33 +44,6 @@ const decodeEmbeddedFile = file => {
   return content;
 };
 const embeddedFilePath = (item, file) => item.source?.layout === "file" ? item.destination : `${item.destination}/${file.path}`.replace(/\/+/g, "/");
-const runGit = async (cwd, ...args) => (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
-
-async function gitSource(path) {
-  try {
-    const root = await runGit(path, "rev-parse", "--show-toplevel");
-    const repository = await runGit(path, "remote", "get-url", "origin");
-    if (!/^(?:https:\/\/github\.com\/|git@github\.com:)/.test(repository)) return null;
-    const changes = (await runGit(root, "status", "--porcelain", "--", path))
-      .split("\n")
-      .filter(line => line && basename(line.slice(3)) !== ".DS_Store");
-    if (changes.length) return null;
-    const commit = await runGit(path, "rev-parse", "HEAD");
-    return {
-      kind: "git",
-      repository: repository.replace(/^git@github\.com:/, "https://github.com/").replace(/\.git$/, ""),
-      commit,
-      path: relative(root, path).split(sep).join("/") || "."
-    };
-  } catch {
-    return null;
-  }
-}
-
-function isWithin(path, root) {
-  const pathFromRoot = relative(root, path);
-  return pathFromRoot === "" || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== ".." && !isAbsolute(pathFromRoot));
-}
 
 async function embeddedSource(root, allowedRoots = [dirname(root)]) {
   const files = [];
@@ -157,11 +131,12 @@ function parseCodexMcp(text) {
   return servers;
 }
 
-async function addFilesystemItems(items, path, kind, agent, destinationBase, scope = "user", excluded = [], allowedRoots) {
+async function addFilesystemItems(items, path, kind, agent, destinationBase, scope = "user", excluded = [], allowedRoots, covered = new Set()) {
   if (!await exists(path)) return;
   for (const entry of await readdir(path, { withFileTypes: true })) {
     if (!entry.isDirectory() || entry.name.startsWith(".") || excluded.includes(entry.name)) continue;
     const sourcePath = join(path, entry.name);
+    if (covered.has(sourcePath)) continue;
     const source = await gitSource(sourcePath) || await embeddedSource(sourcePath, allowedRoots);
     if (source.kind === "embedded" && !source.files.length) continue;
     items.push({
@@ -187,11 +162,13 @@ export async function scan({ home = homedir(), project, title = "Shared agent se
   const items = [];
   const requiredSecrets = new Set();
   const userAgentRoots = [join(home, ".claude"), join(home, ".codex"), join(home, ".agents")];
-  await addFilesystemItems(items, join(home, ".claude/skills"), "skill", "claude-code", ".claude/skills", "user", ["synced", ".trash"], userAgentRoots);
+  const sources = await detectSources(home);
+  items.push(...sources.items);
+  await addFilesystemItems(items, join(home, ".claude/skills"), "skill", "claude-code", ".claude/skills", "user", ["synced", ".trash"], userAgentRoots, sources.covered);
   await addFilesystemItems(items, join(home, ".claude/plugins"), "plugin", "claude-code", ".claude/plugins", "user", ["cache", "data", "marketplaces", "store", "synced"], userAgentRoots);
-  await addFilesystemItems(items, join(home, ".codex/skills"), "skill", "codex", ".codex/skills", "user", [], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".codex/skills"), "skill", "codex", ".codex/skills", "user", [], userAgentRoots, sources.covered);
   await addFilesystemItems(items, join(home, ".codex/plugins"), "plugin", "codex", ".codex/plugins", "user", ["cache", "data", "store", "marketplaces", "synced", ".marketplace-plugin-source-staging", ".remote-plugin-install-staging"], userAgentRoots);
-  await addFilesystemItems(items, join(home, ".agents/skills"), "skill", "shared", ".agents/skills", "user", [], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".agents/skills"), "skill", "shared", ".agents/skills", "user", [], userAgentRoots, sources.covered);
   await addRule(items, join(home, ".claude/CLAUDE.md"), "claude-code", ".claude/CLAUDE.md", "user", userAgentRoots);
   await addRule(items, join(home, ".codex/AGENTS.md"), "codex", ".codex/AGENTS.md", "user", userAgentRoots);
 
@@ -227,7 +204,7 @@ export async function scan({ home = homedir(), project, title = "Shared agent se
   }
   const gitGstack = items.find(item => item.name === "gstack" && item.source?.kind === "git");
   if (gitGstack) for (const item of items) if (item !== gitGstack && item.name === "gstack" && item.source?.kind === "embedded") item.source = structuredClone(gitGstack.source);
-  const bundle = { formatVersion: 1, metadata: { id: randomUUID(), title, createdAt: new Date().toISOString() }, requiredSecrets: [...requiredSecrets].sort(), items };
+  const bundle = { formatVersion: 1, metadata: { id: randomUUID(), title, createdAt: new Date().toISOString() }, requiredSecrets: [...requiredSecrets].sort(), items, notes: sources.notes };
   ensureBundleFits(bundle);
   bundle.integrity = { sha256: sha256(JSON.stringify(bundle)) };
   return bundle;
@@ -237,12 +214,14 @@ export function validate(bundle) {
   if (bundle?.formatVersion !== 1 || !Array.isArray(bundle.items) || !bundle.integrity?.sha256) throw new Error("Invalid version 1 bundle");
   if (!bundle.metadata || typeof bundle.metadata.id !== "string" || typeof bundle.metadata.title !== "string" || !bundle.metadata.title.trim() || bundle.metadata.title.length > 120) throw new Error("Invalid bundle metadata");
   if (!Array.isArray(bundle.requiredSecrets) || bundle.requiredSecrets.some(name => typeof name !== "string" || !/^[A-Z_][A-Z0-9_]*$/.test(name))) throw new Error("Invalid required secrets");
+  if (bundle.notes !== undefined && (!Array.isArray(bundle.notes) || bundle.notes.some(note => typeof note !== "string"))) throw new Error("Invalid bundle notes");
   const { integrity, ...body } = bundle;
   if (sha256(JSON.stringify(body)) !== integrity.sha256) throw new Error("Bundle integrity check failed");
   for (const item of bundle.items) {
-    if (typeof item.id !== "string" || typeof item.name !== "string" || typeof item.agent !== "string" || !["skill", "plugin", "rules", "mcp"].includes(item.kind) || !["user", "project"].includes(item.scope)) throw new Error(`Invalid item: ${item.id}`);
+    if (typeof item.id !== "string" || typeof item.name !== "string" || typeof item.agent !== "string" || !["skill", "plugin", "rules", "mcp", "source"].includes(item.kind) || !["user", "project"].includes(item.scope)) throw new Error(`Invalid item: ${item.id}`);
     safeRelative(item.destination);
     if (item.kind === "mcp" ? !item.config : !item.source) throw new Error(`Missing content: ${item.id}`);
+    if (item.kind === "source") validateSource(item, safeRelative);
     if (item.source?.kind === "embedded") for (const file of item.source.files) {
       safeRelative(file.path);
       if (sha256(decodeEmbeddedFile(file)) !== file.sha256) throw new Error(`Checksum failed: ${item.id}/${file.path}`);
@@ -263,19 +242,93 @@ export function ensureBundleFits(bundle) {
   return bytes;
 }
 
+export function embeddedFiles(bundle) {
+  return bundle.items.flatMap(item => item.source?.kind === "embedded"
+    ? item.source.files.map(file => ({ item, file, path: embeddedFilePath(item, file), content: decodeEmbeddedFile(file) }))
+    : []);
+}
+
 export function bundleReview(bundle) {
   validate(bundle);
-  const files = [];
+  const files = embeddedFiles(bundle).map(({ item, path, content }) => ({ itemId: item.id, path, bytes: content.length }));
   const skipped = [];
   const references = [];
   for (const item of bundle.items) {
     if (item.source?.kind === "embedded") {
-      for (const file of item.source.files) files.push({ itemId: item.id, path: embeddedFilePath(item, file), bytes: decodeEmbeddedFile(file).length });
       for (const file of item.source.skipped || []) skipped.push({ path: embeddedFilePath(item, file), reason: file.reason });
     }
     if (item.source?.kind === "git") references.push({ path: item.destination, repository: item.source.repository, commit: item.source.commit, sourcePath: item.source.path });
   }
-  return { files, skipped, references, bundleBytes: bundleByteLength(bundle) };
+  const sources = bundle.items.filter(item => item.kind === "source").map(item => ({
+    id: item.id,
+    name: item.name,
+    kind: item.source.kind,
+    count: sourceCount(item.source),
+    names: item.source.plugins || item.source.skills || [],
+    commands: item.source.kind === "git-clone"
+      ? [`git clone ${item.source.repository} ~/${item.source.path} (commit ${item.source.commit.slice(0, 12)}), then link ${item.source.links.length} skill paths`]
+      : sourceCommands(item).map(commandText)
+  }));
+  return { files, skipped, references, sources, notes: bundle.notes || [], bundleBytes: bundleByteLength(bundle) };
+}
+
+const allowedDestinations = {
+  skill: /^\.(?:claude|codex|agents)\/skills\/[^/]+$/,
+  plugin: /^\.(?:claude|codex)\/plugins\/[^/]+$/,
+  rules: /^(?:\.claude\/CLAUDE\.md|\.codex\/AGENTS\.md|CLAUDE\.md|AGENTS\.md)$/,
+  mcp: /^(?:\.claude\.json|\.codex\/config\.toml|\.mcp\.json)$/,
+  source: /^\.(?:claude|codex|agents)\/(?:skills|plugins)(?:\/[^/]+)?$/
+};
+
+// Server-side review: repeats the scan checks on the uploaded content, which the client may have altered.
+export function reviewBundle(bundle) {
+  validate(bundle);
+  const blockers = [];
+  const warnings = [];
+  for (const item of bundle.items) {
+    if (!allowedDestinations[item.kind].test(item.destination)) blockers.push(`${item.id}: unexpected destination ${item.destination}`);
+    if (item.kind === "mcp") {
+      if (typeof item.config !== "object" || Array.isArray(item.config)) blockers.push(`${item.id}: MCP config must be an object`);
+      else for (const [name, server] of Object.entries(item.config)) {
+        if (!/^[A-Za-z0-9_-]+$/.test(name)) blockers.push(`${item.id}: invalid MCP server name ${JSON.stringify(name)}`);
+        else if (Object.keys(server || {}).join() !== "command" || typeof server.command !== "string" || !server.command.trim()) blockers.push(`${item.id}/${name}: MCP entry must contain only a command`);
+        else if (containsSecret(server.command)) blockers.push(`${item.id}/${name}: possible secret in MCP command`);
+        else warnings.push(`${item.id}/${name}: MCP server runs \`${server.command}\``);
+      }
+    }
+    if (item.kind === "source") {
+      for (const command of sourceCommands(item)) warnings.push(`${item.id}: runs \`${commandText(command)}\``);
+      if (item.source.kind === "git-clone") warnings.push(`${item.id}: clones ${item.source.repository}@${item.source.commit.slice(0, 12)} (not scanned by RigDrop) and links ${item.source.links.length} skill paths${item.source.setup ? "; its setup script is not run" : ""}`);
+    }
+    if (item.source?.kind === "git") {
+      if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+$/.test(item.source.repository)) blockers.push(`${item.id}: Git source must be a GitHub HTTPS repository`);
+      safeRelative(item.source.path);
+      warnings.push(`${item.id}: Git reference ${item.source.repository}@${item.source.commit.slice(0, 12)} is not scanned by RigDrop`);
+    }
+  }
+  for (const { item, path, content } of embeddedFiles(bundle)) {
+    if (deniedNames.test(basename(path))) blockers.push(`${item.id}: sensitive filename ${path}`);
+    else if (!isPortableTextOrScript(path, content)) blockers.push(`${item.id}: unsupported file ${path}`);
+    else if (containsSecret(content.toString("utf8"))) blockers.push(`${item.id}: possible secret in ${path}`);
+    else if (content.subarray(0, 2).toString("utf8") === "#!" || /\.(?:sh|bash|zsh|fish|ps1|py|rb|js|mjs|cjs|ts)$/i.test(path)) warnings.push(`${item.id}: script ${path}`);
+  }
+  return { status: blockers.length ? "rejected" : "passed", checkedAt: new Date().toISOString(), blockers, warnings };
+}
+
+function seal(bundle) {
+  const { integrity, ...body } = bundle;
+  return { ...body, integrity: { sha256: sha256(JSON.stringify(body)) } };
+}
+
+// Removes whole items by ID and single files by review path.
+export function excludeFromBundle(bundle, selections) {
+  if (!selections.length) return bundle;
+  const ids = new Set(bundle.items.map(item => item.id));
+  const paths = new Set(bundleReview(bundle).files.map(file => file.path));
+  const unknown = selections.filter(selection => !ids.has(selection) && !paths.has(selection));
+  if (unknown.length) throw new Error(`Nothing matches --exclude ${unknown.join(", ")}`);
+  const next = seal({ ...bundle, items: bundle.items.filter(item => !selections.includes(item.id)) });
+  return omitBundleFiles(next, selections.filter(selection => paths.has(selection)));
 }
 
 export function omitBundleFiles(bundle, selections) {
@@ -359,14 +412,64 @@ async function installMcp(item, destination) {
   }
 }
 
-export async function install(bundle, { home = homedir(), project = process.cwd(), force = false } = {}) {
+function runCommand({ command, args }) {
+  return new Promise((resolveRun, reject) => {
+    const child = spawn(command, args, { stdio: "inherit" });
+    child.on("error", reject);
+    child.on("exit", code => code === 0 ? resolveRun() : reject(new Error(`${command} exited with code ${code}`)));
+  });
+}
+
+async function installSource(item, home, run, changes) {
+  const { source } = item;
+  if (source.kind !== "git-clone") {
+    for (const command of sourceCommands(item)) {
+      try {
+        await run(command);
+        changes.push({ item: item.id, command: commandText(command), status: "ran" });
+      } catch (error) {
+        if (command.optional) continue;
+        changes.push({ item: item.id, command: commandText(command), status: error.code === "ENOENT" ? `skipped: ${command.command} not found` : "failed" });
+      }
+    }
+    return;
+  }
+  const clone = join(home, source.path);
+  if (await exists(clone)) changes.push({ item: item.id, destination: source.path, scope: "user", status: "kept" });
+  else {
+    const change = { item: item.id, destination: source.path, scope: "user", status: "installing", hadExisting: false };
+    changes.push(change);
+    await exec("git", ["clone", "--quiet", source.repository, clone]);
+    await exec("git", ["-C", clone, "reset", "--quiet", "--hard", source.commit]);
+    change.status = "installed";
+  }
+  const newSkillFolders = new Set();
+  for (const link of source.links) {
+    const path = join(home, link.path);
+    if (await lstat(path).then(() => true, () => false)) continue;
+    const skillFolder = link.path.split("/").slice(0, 3).join("/");
+    // Record the new skill folder once, so rollback removes the folder and not only the link.
+    if (!newSkillFolders.has(skillFolder) && !await lstat(join(home, skillFolder)).then(() => true, () => false)) {
+      newSkillFolders.add(skillFolder);
+      changes.push({ item: item.id, destination: skillFolder, scope: "user", status: "installed", hadExisting: false });
+    }
+    await mkdir(dirname(path), { recursive: true });
+    await symlink(join(clone, link.target), path);
+  }
+}
+
+export async function install(bundle, { home = homedir(), project = process.cwd(), force = false, exclude = [], run = runCommand } = {}) {
   validate(bundle);
   const id = `${Date.now()}-${bundle.metadata.id.slice(0, 8)}`;
   const stateRoot = join(home, ".agent-setup-link");
   const backupRoot = join(stateRoot, "backups", id);
   const changes = [];
   try {
-    for (const item of plan(bundle, home, project)) {
+    for (const item of plan(bundle, home, project).filter(item => !exclude.includes(item.id))) {
+      if (item.kind === "source") {
+        await installSource(item, home, run, changes);
+        continue;
+      }
       const destination = item.absoluteDestination;
       const hadExisting = await exists(destination);
       if (hadExisting && !force) {
@@ -424,18 +527,30 @@ export async function doctor(home = homedir()) {
   return Promise.all([".claude", ".codex", ".agents/skills"].map(async path => ({ path, found: await exists(join(home, path)) })));
 }
 
-export async function publish(bundlePath, { registry = process.env.AGENT_SETUP_REGISTRY_URL || "https://agent-setup-link.vercel.app", token = process.env.AGENT_SETUP_PUBLISH_TOKEN } = {}) {
+export async function publish(bundlePath, { registry, token } = {}) {
   const bundle = validate(JSON.parse(await readFile(resolve(bundlePath), "utf8")));
   ensureBundleFits(bundle);
-  if (!token) throw new Error("Set AGENT_SETUP_PUBLISH_TOKEN before publishing");
+  if (!registry || !token) throw new Error("Run rigdrop login first");
   const response = await fetch(`${registry.replace(/\/$/, "")}/api/bundles`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(bundle)
   });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || `Publishing failed: ${response.status}`);
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error([result.error || `Publishing failed: ${response.status}`, ...(result.review?.blockers || [])].join("\n- "));
   return result.page;
+}
+
+export async function unpublish(url, { registry, token } = {}) {
+  if (!registry || !token) throw new Error("Run rigdrop login first");
+  const slug = String(url).match(/\/s\/([0-9a-f]{32})\/?$/i)?.[1];
+  if (!slug) throw new Error("Use a RigDrop bundle URL such as https://agent-setup-link.vercel.app/s/BUNDLE_ID");
+  // Send the session token only to the registry it belongs to.
+  if (new URL(url).origin !== new URL(registry).origin) throw new Error(`This session belongs to ${registry}`);
+  const response = await fetch(`${registry.replace(/\/$/, "")}/api/bundles?id=${slug}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || `Unpublishing failed: ${response.status}`);
+  return slug;
 }
 
 export async function publishBundle(bundle, { registry, token } = {}) {

@@ -12,17 +12,9 @@
   <h1>Share your agent setup with one link.</h1>
   <p class="lede">Bundle skills, plugins, MCP definitions, and rules. Your teammate inspects the exact changes before installing them.</p>
   <section class="flow"><span>Scan</span><i>→</i><span>Publish</span><i>→</i><span>Inspect</span><i>→</i><span>Install</span></section>
-  <section>
-    <h2>Publish a bundle</h2>
-    <form id="publish-form">
-      <label>Publishing token<input id="token" type="password" autocomplete="off" required></label>
-      <label>Bundle JSON<input id="bundle" type="file" accept="application/json,.json" required></label>
-      <button type="submit">Create public link</button>
-    </form>
-    <p id="result" role="status"></p>
-  </section>
-  <section><h2>CLI workflow</h2><pre><code>agent-setup scan --out team.bundle.json
-agent-setup publish team.bundle.json</code></pre></section>
+  <section><h2>Share your setup</h2><pre><code>npx --yes github:GaganChaudhary6378/rigdrop login
+npx --yes github:GaganChaudhary6378/rigdrop share</code></pre><p class="muted">Sign in once with Google. You review every file before upload.</p></section>
+  <section><h2>Review a shared setup with an agent</h2><pre><code>npx --yes github:GaganChaudhary6378/rigdrop add-skill
+/rigdrop-review https://agent-setup-link.vercel.app/s/BUNDLE_ID</code></pre></section>
   <p class="muted">Secret values are removed before publishing. Every receiver sees a preview before installation.</p>
-  <script src="/app.js" defer></script>
 </main></body></html>
