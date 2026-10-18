@@ -47,9 +47,11 @@ agent-setup publish team.bundle.json
 Set the private publishing token and publish:
 
 ```sh
-export AGENT_SETUP_PUBLISH_TOKEN=your-token
+set -a; source .env.local; set +a
 agent-setup publish team.bundle.json
 ```
+
+The local `.env.local` file is ignored by Git. Never commit it or paste its token into a bundle.
 
 `publish` displays the public bundle URL. Anyone with the link can read the embedded local files, so inspect the bundle before publishing.
 
