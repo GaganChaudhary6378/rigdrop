@@ -18,7 +18,7 @@ function summary(bundle) {
   for (const item of bundle.items) console.log(`- ${item.kind}: ${item.name} -> ~/${item.destination} (${item.source?.kind || "config"})`);
   if (bundle.requiredSecrets.length) console.log(`Required environment variables: ${bundle.requiredSecrets.join(", ")}`);
   const skipped = bundle.items.flatMap(item => (item.source?.skipped || []).map(file => `${item.name}/${file.path}`));
-  if (skipped.length) console.log(`Skipped ${skipped.length} oversized file(s): ${skipped.join(", ")}`);
+  if (skipped.length) console.log(`Skipped ${skipped.length} non-portable or oversized file(s): ${skipped.join(", ")}`);
 }
 
 async function main() {

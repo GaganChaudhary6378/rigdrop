@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
+import { gunzipSync } from "node:zlib";
 import { install, rollback, scan, share, validate } from "../src/core.js";
 import { bundleUrls, renderBundlePage, renderInstructions } from "../src/hosted.js";
 
@@ -20,6 +21,8 @@ test("scan replaces MCP values and installs embedded skills", async () => {
   const bundle = await scan({ home: sender });
   assert.deepEqual(bundle.requiredSecrets, ["API_TOKEN"]);
   assert.equal(JSON.stringify(bundle).includes("do-not-copy"), false);
+  assert.equal(bundle.items[0].source.files[0].encoding, "gzip-base64");
+  assert.equal(gunzipSync(Buffer.from(bundle.items[0].source.files[0].content, "base64")).toString("utf8"), "# Demo\n");
   validate(bundle);
 
   const journal = await install(bundle, { home: receiver });
@@ -48,10 +51,26 @@ test("scan skips oversized embedded files and records the omission", async () =>
   const sender = await mkdtemp(join(tmpdir(), "rigdrop-large-file-"));
   await mkdir(join(sender, ".codex/skills/demo"), { recursive: true });
   await writeFile(join(sender, ".codex/skills/demo/SKILL.md"), "# Demo\n");
-  await writeFile(join(sender, ".codex/skills/demo/asset.bin"), Buffer.alloc(513 * 1024));
+  await writeFile(join(sender, ".codex/skills/demo/asset.bin"), Buffer.alloc(257 * 1024));
   const bundle = await scan({ home: sender });
-  assert.deepEqual(bundle.items[0].source.skipped, [{ path: "asset.bin", reason: "exceeds 524288 bytes" }]);
+  assert.deepEqual(bundle.items[0].source.skipped, [{ path: "asset.bin", reason: "exceeds 262144 bytes" }]);
   assert.equal(bundle.items[0].source.files.length, 1);
+});
+
+test("scan captures portable scripts but omits work assets and build output", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-portable-files-"));
+  const skill = join(sender, ".agents/skills/demo");
+  await mkdir(join(skill, "node_modules/package"), { recursive: true });
+  await mkdir(join(skill, "dist"), { recursive: true });
+  await writeFile(join(skill, "SKILL.md"), "# Demo\n");
+  await writeFile(join(skill, "run"), "#!/bin/sh\necho demo\n");
+  await writeFile(join(skill, "presentation.pptx"), Buffer.from([0, 1, 2]));
+  await writeFile(join(skill, "node_modules/package/index.js"), "throw new Error()\n");
+  await writeFile(join(skill, "dist/bundle.js"), "throw new Error()\n");
+  const bundle = await scan({ home: sender });
+  const source = bundle.items[0].source;
+  assert.deepEqual(source.files.map(file => file.path).sort(), ["SKILL.md", "run"]);
+  assert.deepEqual(source.skipped, [{ path: "presentation.pptx", reason: "not a portable text or script file" }]);
 });
 
 test("scan ignores Claude plugin cache directories", async () => {
@@ -63,6 +82,18 @@ test("scan ignores Claude plugin cache directories", async () => {
   const bundle = await scan({ home: sender });
   assert.equal(bundle.items.length, 1);
   assert.equal(bundle.items[0].name, "synced");
+});
+
+test("scan ignores synced work folders and Codex plugin caches", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-excluded-folders-"));
+  await mkdir(join(sender, ".claude/skills/synced/work"), { recursive: true });
+  await mkdir(join(sender, ".codex/plugins/cache/plugin"), { recursive: true });
+  await mkdir(join(sender, ".agents/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".claude/skills/synced/work/SKILL.md"), "# Work\n");
+  await writeFile(join(sender, ".codex/plugins/cache/plugin/SKILL.md"), "# Cache\n");
+  await writeFile(join(sender, ".agents/skills/demo/SKILL.md"), "# Demo\n");
+  const bundle = await scan({ home: sender });
+  assert.deepEqual(bundle.items.map(item => item.name), ["demo"]);
 });
 
 test("scan keeps a clean GitHub skill as a pinned reference despite .DS_Store", async () => {
@@ -93,7 +124,7 @@ test("scan follows symlinks that stay inside an agent directory", async () => {
   const bundle = await scan({ home: sender });
   const command = bundle.items.find(item => item.name === "_gstack-command");
   assert.equal(command.source.files[0].path, "SKILL.md");
-  assert.equal(Buffer.from(command.source.files[0].content, "base64").toString("utf8"), "# Gstack\n");
+  assert.equal(gunzipSync(Buffer.from(command.source.files[0].content, "base64")).toString("utf8"), "# Gstack\n");
 });
 
 test("scan follows links between known agent directories", async () => {
@@ -105,7 +136,7 @@ test("scan follows links between known agent directories", async () => {
 
   const bundle = await scan({ home: sender });
   const codexSkill = bundle.items.find(item => item.agent === "codex");
-  assert.equal(Buffer.from(codexSkill.source.files[0].content, "base64").toString("utf8"), "# Ethos\n");
+  assert.equal(gunzipSync(Buffer.from(codexSkill.source.files[0].content, "base64")).toString("utf8"), "# Ethos\n");
 });
 
 test("scan rejects symlinks that resolve outside an agent directory", async () => {

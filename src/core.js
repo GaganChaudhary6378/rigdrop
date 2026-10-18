@@ -2,12 +2,15 @@ import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
 import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
+import { gunzipSync, gzipSync } from "node:zlib";
 
 const exec = promisify(execFile);
-const MAX_FILE = 512 * 1024;
+const MAX_FILE = 256 * 1024;
 const MAX_BUNDLE = 4 * 1024 * 1024;
+const portableExtensions = new Set([".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".rb", ".go", ".rs", ".java", ".kt", ".swift", ".sql", ".html", ".css", ".xml", ".csv"]);
+const portableNames = new Set(["agents", "claude", "readme", "license", "notice", "changelog", "dockerfile", "makefile"]);
 const deniedNames = /^(\.env(?:\..*)?|auth\.json|credentials(?:\.json)?|cookies?|id_(?:rsa|ed25519)(?:\.pub)?)$/i;
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
@@ -27,6 +30,18 @@ const safeRelative = path => {
 const containsSecret = text => secretPatterns.some(pattern =>
   [...text.matchAll(new RegExp(pattern.source, "g"))].some(match => !knownSecretExamples.has(match[0]))
 );
+const isPortableTextOrScript = (path, content) => {
+  if (content.includes(0) || content.toString("utf8").includes("\uFFFD")) return false;
+  const name = basename(path).toLowerCase();
+  return portableExtensions.has(extname(name)) || portableNames.has(name) || content.subarray(0, 2).toString("utf8") === "#!";
+};
+const decodeEmbeddedFile = file => {
+  if (file.encoding && file.encoding !== "gzip-base64") throw new Error(`Unsupported file encoding: ${file.path}`);
+  const encoded = Buffer.from(file.content, "base64");
+  const content = file.encoding === "gzip-base64" ? gunzipSync(encoded) : encoded;
+  if (content.length > MAX_FILE) throw new Error(`Embedded file exceeds ${MAX_FILE} bytes: ${file.path}`);
+  return content;
+};
 const runGit = async (cwd, ...args) => (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
 
 async function gitSource(path) {
@@ -77,9 +92,13 @@ async function embeddedSource(root, allowedRoots = [dirname(root)]) {
         return;
       }
       const content = await readFile(current);
+      if (!isPortableTextOrScript(path, content)) {
+        skipped.push({ path: safeRelative(prefix || basename(path)), reason: "not a portable text or script file" });
+        return;
+      }
       const text = content.toString("utf8");
       if (containsSecret(text)) throw new Error(`Possible secret found in: ${path}`);
-      files.push({ path: safeRelative(prefix || basename(path)), content: content.toString("base64"), sha256: sha256(content) });
+      files.push({ path: safeRelative(prefix || basename(path)), content: gzipSync(content).toString("base64"), encoding: "gzip-base64", sha256: sha256(content) });
       return;
     }
     if (!entry.isDirectory()) throw new Error(`Unsupported file type: ${path}`);
@@ -87,7 +106,7 @@ async function embeddedSource(root, allowedRoots = [dirname(root)]) {
     if (ancestry.has(canonical)) throw new Error(`Refusing symlink cycle: ${path}`);
     const nextAncestry = new Set(ancestry).add(canonical);
     for (const child of await readdir(current, { withFileTypes: true })) {
-      if ([".git", "node_modules", "dist", "coverage"].includes(child.name) || deniedNames.test(child.name)) continue;
+      if ([".git", "node_modules", "dist", "coverage", "build", ".next", ".cache"].includes(child.name) || deniedNames.test(child.name)) continue;
       await walk(join(current, child.name), prefix ? `${prefix}/${child.name}` : child.name, nextAncestry);
     }
   }
@@ -168,10 +187,10 @@ export async function scan({ home = homedir(), project, title = "Shared agent se
   const items = [];
   const requiredSecrets = new Set();
   const userAgentRoots = [join(home, ".claude"), join(home, ".codex"), join(home, ".agents")];
-  await addFilesystemItems(items, join(home, ".claude/skills"), "skill", "claude-code", ".claude/skills", "user", [], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".claude/skills"), "skill", "claude-code", ".claude/skills", "user", ["synced", ".trash"], userAgentRoots);
   await addFilesystemItems(items, join(home, ".claude/plugins"), "plugin", "claude-code", ".claude/plugins", "user", ["cache", "data", "marketplaces", "store"], userAgentRoots);
   await addFilesystemItems(items, join(home, ".codex/skills"), "skill", "codex", ".codex/skills", "user", [], userAgentRoots);
-  await addFilesystemItems(items, join(home, ".codex/plugins"), "plugin", "codex", ".codex/plugins", "user", [], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".codex/plugins"), "plugin", "codex", ".codex/plugins", "user", ["cache", "data", "store", "marketplaces", "synced", ".marketplace-plugin-source-staging", ".remote-plugin-install-staging"], userAgentRoots);
   await addFilesystemItems(items, join(home, ".agents/skills"), "skill", "shared", ".agents/skills", "user", [], userAgentRoots);
   await addRule(items, join(home, ".claude/CLAUDE.md"), "claude-code", ".claude/CLAUDE.md", "user", userAgentRoots);
   await addRule(items, join(home, ".codex/AGENTS.md"), "codex", ".codex/AGENTS.md", "user", userAgentRoots);
@@ -221,7 +240,7 @@ export function validate(bundle) {
     if (item.kind === "mcp" ? !item.config : !item.source) throw new Error(`Missing content: ${item.id}`);
     if (item.source?.kind === "embedded") for (const file of item.source.files) {
       safeRelative(file.path);
-      if (sha256(Buffer.from(file.content, "base64")) !== file.sha256) throw new Error(`Checksum failed: ${item.id}/${file.path}`);
+      if (sha256(decodeEmbeddedFile(file)) !== file.sha256) throw new Error(`Checksum failed: ${item.id}/${file.path}`);
     }
     if (item.source?.kind === "embedded" && item.source.skipped && !item.source.skipped.every(file => typeof file.reason === "string" && safeRelative(file.path))) throw new Error(`Invalid skipped file: ${item.id}`);
     if (item.source?.kind === "git" && !/^[0-9a-f]{40}$/i.test(item.source.commit)) throw new Error(`Unpinned Git source: ${item.id}`);
@@ -247,13 +266,13 @@ async function materialize(item, destination) {
     if (item.source.layout === "file") {
       const [file] = item.source.files;
       await mkdir(dirname(destination), { recursive: true });
-      await writeFile(destination, Buffer.from(file.content, "base64"));
+      await writeFile(destination, decodeEmbeddedFile(file));
       return;
     }
     for (const file of item.source.files) {
       const target = join(destination, safeRelative(file.path));
       await mkdir(dirname(target), { recursive: true });
-      await writeFile(target, Buffer.from(file.content, "base64"));
+      await writeFile(target, decodeEmbeddedFile(file));
     }
     return;
   }
