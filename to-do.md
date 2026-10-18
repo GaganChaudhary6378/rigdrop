@@ -1,4 +1,4 @@
-# Agent Setup Link implementation plan
+# RigDrop implementation plan
 
 ## Phase 0: Product and technical definition
 

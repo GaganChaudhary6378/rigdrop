@@ -1,4 +1,4 @@
-# Agent Setup Link
+# RigDrop
 
 Export selected Claude Code and Codex settings into one reviewable bundle, publish it to an agent-readable URL, and install it on another machine.
 
@@ -27,8 +27,8 @@ No bundle scripts are executed. Secret values are never written into a bundle.
 ## Setup
 
 ```sh
-git clone https://github.com/GaganChaudhary6378/agent-setup-link.git
-cd agent-setup-link
+git clone https://github.com/GaganChaudhary6378/rigdrop.git
+cd rigdrop
 npm link
 agent-setup doctor
 ```

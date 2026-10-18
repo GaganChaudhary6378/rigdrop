@@ -73,6 +73,6 @@ test("hosted formats expose stable agent-readable links", () => {
   };
   const urls = bundleUrls("https://example.com/", row.slug);
   assert.equal(urls.manifest, `https://example.com/s/${row.slug}/manifest.json`);
-  assert.match(renderInstructions(row, "https://example.com"), /agent-setup-link install/);
+  assert.match(renderInstructions(row, "https://example.com"), /rigdrop install/);
   assert.match(renderBundlePage(row, "https://example.com"), /Demo &lt;setup&gt;/);
 });

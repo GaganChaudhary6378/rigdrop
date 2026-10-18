@@ -13,7 +13,7 @@ export function bundleUrls(origin, slug) {
 
 export function renderInstructions(row, origin) {
   const urls = bundleUrls(origin, row.slug);
-  return `# ${row.title}\n\nThis is an Agent Setup Link bundle. Inspect it before applying changes.\n\n## Inspect\n\n\`\`\`sh\nnpx --yes github:GaganChaudhary6378/agent-setup-link inspect ${urls.page}\n\`\`\`\n\n## Install\n\n\`\`\`sh\nnpx --yes github:GaganChaudhary6378/agent-setup-link install ${urls.page} --yes\n\`\`\`\n\n- Raw manifest: ${urls.manifest}\n- SHA-256: ${row.checksum}\n- Required secret values are supplied separately on the receiving machine.\n`;
+  return `# ${row.title}\n\nThis is a RigDrop bundle. Inspect it before applying changes.\n\n## Inspect\n\n\`\`\`sh\nnpx --yes github:GaganChaudhary6378/rigdrop inspect ${urls.page}\n\`\`\`\n\n## Install\n\n\`\`\`sh\nnpx --yes github:GaganChaudhary6378/rigdrop install ${urls.page} --yes\n\`\`\`\n\n- Raw manifest: ${urls.manifest}\n- SHA-256: ${row.checksum}\n- Required secret values are supplied separately on the receiving machine.\n`;
 }
 
 export function renderBundlePage(row, origin) {
@@ -28,14 +28,14 @@ export function renderBundlePage(row, origin) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>${escapeHtml(row.title)} · Agent Setup Link</title>
+  <title>${escapeHtml(row.title)} · RigDrop</title>
   <meta name="description" content="Inspect and install a shared AI agent setup.">
   <link rel="alternate" type="application/json" href="${urls.manifest}">
   <link rel="alternate" type="text/markdown" href="${urls.instructions}">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body><main>
-  <a class="brand" href="/">Agent Setup Link</a>
+  <a class="brand" href="/">RigDrop</a>
   <p class="eyebrow">PUBLIC SETUP BUNDLE</p>
   <h1>${escapeHtml(row.title)}</h1>
   <p class="lede">Review this setup before adding it to Claude Code or Codex.</p>

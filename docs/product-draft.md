@@ -26,7 +26,7 @@ The result is that good setups remain personal even when they would help an enti
 
 ## Main differentiator
 
-Existing tools can share one editor profile or one vendor's plugins. Agent Setup Link describes one setup across multiple agent products and carries local extensions safely.
+Existing tools can share one editor profile or one vendor's plugins. RigDrop describes one setup across multiple agent products and carries local extensions safely.
 
 The share link is both:
 
