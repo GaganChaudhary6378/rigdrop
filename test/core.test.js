@@ -19,15 +19,16 @@ test("scan replaces MCP values and installs embedded skills", async () => {
   await writeFile(join(sender, ".claude.json"), JSON.stringify({ mcpServers: { demo: { command: "demo", env: { API_TOKEN: "do-not-copy" } } } }));
 
   const bundle = await scan({ home: sender });
-  assert.deepEqual(bundle.requiredSecrets, ["API_TOKEN"]);
+  assert.deepEqual(bundle.requiredSecrets, []);
   assert.equal(JSON.stringify(bundle).includes("do-not-copy"), false);
+  assert.deepEqual(bundle.items.find(item => item.kind === "mcp").config, { demo: { command: "demo" } });
   assert.equal(bundle.items[0].source.files[0].encoding, "gzip-base64");
   assert.equal(gunzipSync(Buffer.from(bundle.items[0].source.files[0].content, "base64")).toString("utf8"), "# Demo\n");
   validate(bundle);
 
   const journal = await install(bundle, { home: receiver });
   assert.equal(await readFile(join(receiver, ".agents/skills/demo/SKILL.md"), "utf8"), "# Demo\n");
-  assert.match(await readFile(join(receiver, ".claude.json"), "utf8"), /\$\{API_TOKEN\}/);
+  assert.doesNotMatch(await readFile(join(receiver, ".claude.json"), "utf8"), /API_TOKEN|do-not-copy/);
   await rollback(journal.id, receiver);
   await assert.rejects(readFile(join(receiver, ".agents/skills/demo/SKILL.md")));
 });
@@ -58,6 +59,16 @@ test("review can remove selected files before publishing", async () => {
   const edited = omitBundleFiles(bundle, [review.files.find(file => file.path.endsWith("reference.md")).path]);
   assert.equal(bundleReview(edited).files.length, 1);
   assert.equal(bundleReview(edited).skipped.at(-1).reason, "removed during review");
+});
+
+test("review uses the destination itself for rule files and omits empty rules", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-rules-review-"));
+  await mkdir(join(sender, ".claude"), { recursive: true });
+  await mkdir(join(sender, ".codex"), { recursive: true });
+  await writeFile(join(sender, ".claude/CLAUDE.md"), "# Rules\n");
+  await writeFile(join(sender, ".codex/AGENTS.md"), "");
+  const bundle = await scan({ home: sender });
+  assert.deepEqual(bundleReview(bundle).files.map(file => file.path), [".claude/CLAUDE.md"]);
 });
 
 test("scan allows the documented AWS example key", async () => {
@@ -94,15 +105,14 @@ test("scan captures portable scripts but omits work assets and build output", as
   assert.deepEqual(source.skipped, [{ path: "presentation.pptx", reason: "not a portable text or script file" }]);
 });
 
-test("scan ignores Claude plugin cache directories", async () => {
+test("scan ignores Claude plugin cache and synced directories", async () => {
   const sender = await mkdtemp(join(tmpdir(), "rigdrop-plugin-cache-"));
   await mkdir(join(sender, ".claude/plugins/cache/plugin"), { recursive: true });
   await mkdir(join(sender, ".claude/plugins/synced/plugin"), { recursive: true });
   await writeFile(join(sender, ".claude/plugins/cache/plugin/SKILL.md"), "-----BEGIN PRIVATE KEY-----\n");
   await writeFile(join(sender, ".claude/plugins/synced/plugin/SKILL.md"), "# Portable plugin\n");
   const bundle = await scan({ home: sender });
-  assert.equal(bundle.items.length, 1);
-  assert.equal(bundle.items[0].name, "synced");
+  assert.equal(bundle.items.length, 0);
 });
 
 test("scan ignores synced work folders and Codex plugin caches", async () => {

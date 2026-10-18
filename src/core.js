@@ -8,7 +8,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
 
 const exec = promisify(execFile);
 const MAX_FILE = 256 * 1024;
-const MAX_BUNDLE = 4 * 1024 * 1024;
+export const MAX_BUNDLE_BYTES = 4 * 1024 * 1024;
 const portableExtensions = new Set([".md", ".txt", ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".py", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".rb", ".go", ".rs", ".java", ".kt", ".swift", ".sql", ".html", ".css", ".xml", ".csv"]);
 const portableNames = new Set(["agents", "claude", "readme", "license", "notice", "changelog", "dockerfile", "makefile"]);
 const deniedNames = /^(\.env(?:\..*)?|auth\.json|credentials(?:\.json)?|cookies?|id_(?:rsa|ed25519)(?:\.pub)?|.+\.(?:pem|key|p12|pfx))$/i;
@@ -42,7 +42,7 @@ const decodeEmbeddedFile = file => {
   if (content.length > MAX_FILE) throw new Error(`Embedded file exceeds ${MAX_FILE} bytes: ${file.path}`);
   return content;
 };
-const embeddedFilePath = (item, file) => `${item.destination}/${file.path}`.replace(/\/+/g, "/");
+const embeddedFilePath = (item, file) => item.source?.layout === "file" ? item.destination : `${item.destination}/${file.path}`.replace(/\/+/g, "/");
 const runGit = async (cwd, ...args) => (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
 
 async function gitSource(path) {
@@ -91,6 +91,10 @@ async function embeddedSource(root, allowedRoots = [dirname(root)]) {
         skipped.push({ path: safeRelative(prefix || basename(path)), reason: "sensitive filename" });
         return;
       }
+      if (entry.size === 0) {
+        skipped.push({ path: safeRelative(prefix || basename(path)), reason: "empty file" });
+        return;
+      }
       if (entry.size > MAX_FILE) {
         skipped.push({ path: safeRelative(prefix || basename(path)), reason: `exceeds ${MAX_FILE} bytes` });
         return;
@@ -118,22 +122,10 @@ async function embeddedSource(root, allowedRoots = [dirname(root)]) {
   return { kind: "embedded", layout, files, skipped };
 }
 
-function cleanMcp(value, requiredSecrets, key = "") {
-  if (Array.isArray(value)) return value.map(item => cleanMcp(item, requiredSecrets, key));
-  if (!value || typeof value !== "object") return value;
+function commandOnlyMcp(servers) {
   const clean = {};
-  for (const [name, child] of Object.entries(value)) {
-    if (name === "env" && child && typeof child === "object") {
-      clean.env = {};
-      for (const envName of Object.keys(child)) {
-        requiredSecrets.add(envName);
-        clean.env[envName] = `\${${envName}}`;
-      }
-    } else if (/token|secret|password|authorization|cookie|api.?key/i.test(name)) {
-      const envName = `${key}_${name}`.replace(/[^A-Za-z0-9]+/g, "_").replace(/^_|_$/g, "").toUpperCase();
-      requiredSecrets.add(envName);
-      clean[name] = `\${${envName}}`;
-    } else clean[name] = cleanMcp(child, requiredSecrets, `${key}_${name}`);
+  for (const [name, server] of Object.entries(servers || {})) {
+    if (typeof server?.command === "string" && server.command.trim() && !containsSecret(server.command)) clean[name] = { command: server.command.trim() };
   }
   return clean;
 }
@@ -168,8 +160,10 @@ function parseCodexMcp(text) {
 async function addFilesystemItems(items, path, kind, agent, destinationBase, scope = "user", excluded = [], allowedRoots) {
   if (!await exists(path)) return;
   for (const entry of await readdir(path, { withFileTypes: true })) {
-    if (!entry.isDirectory() || excluded.includes(entry.name)) continue;
+    if (!entry.isDirectory() || entry.name.startsWith(".") || excluded.includes(entry.name)) continue;
     const sourcePath = join(path, entry.name);
+    const source = await gitSource(sourcePath) || await embeddedSource(sourcePath, allowedRoots);
+    if (source.kind === "embedded" && !source.files.length) continue;
     items.push({
       id: `${agent}-${kind}-${entry.name}`,
       name: entry.name,
@@ -177,14 +171,16 @@ async function addFilesystemItems(items, path, kind, agent, destinationBase, sco
       agent,
       scope,
       destination: `${destinationBase}/${entry.name}`,
-      source: await gitSource(sourcePath) || await embeddedSource(sourcePath, allowedRoots)
+      source
     });
   }
 }
 
 async function addRule(items, path, agent, destination, scope = "user", allowedRoots) {
   if (!await exists(path)) return;
-  items.push({ id: `${agent}-rules-${basename(path)}`, name: basename(path), kind: "rules", agent, scope, destination, source: await gitSource(path) || await embeddedSource(path, allowedRoots) });
+  const source = await gitSource(path) || await embeddedSource(path, allowedRoots);
+  if (source.kind === "embedded" && !source.files.length) return;
+  items.push({ id: `${agent}-rules-${basename(path)}`, name: basename(path), kind: "rules", agent, scope, destination, source });
 }
 
 export async function scan({ home = homedir(), project, title = "Shared agent setup" } = {}) {
@@ -192,7 +188,7 @@ export async function scan({ home = homedir(), project, title = "Shared agent se
   const requiredSecrets = new Set();
   const userAgentRoots = [join(home, ".claude"), join(home, ".codex"), join(home, ".agents")];
   await addFilesystemItems(items, join(home, ".claude/skills"), "skill", "claude-code", ".claude/skills", "user", ["synced", ".trash"], userAgentRoots);
-  await addFilesystemItems(items, join(home, ".claude/plugins"), "plugin", "claude-code", ".claude/plugins", "user", ["cache", "data", "marketplaces", "store"], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".claude/plugins"), "plugin", "claude-code", ".claude/plugins", "user", ["cache", "data", "marketplaces", "store", "synced"], userAgentRoots);
   await addFilesystemItems(items, join(home, ".codex/skills"), "skill", "codex", ".codex/skills", "user", [], userAgentRoots);
   await addFilesystemItems(items, join(home, ".codex/plugins"), "plugin", "codex", ".codex/plugins", "user", ["cache", "data", "store", "marketplaces", "synced", ".marketplace-plugin-source-staging", ".remote-plugin-install-staging"], userAgentRoots);
   await addFilesystemItems(items, join(home, ".agents/skills"), "skill", "shared", ".agents/skills", "user", [], userAgentRoots);
@@ -203,14 +199,16 @@ export async function scan({ home = homedir(), project, title = "Shared agent se
   if (await exists(claudeConfig)) {
     const parsed = JSON.parse(await readFile(claudeConfig, "utf8"));
     if (parsed.mcpServers && Object.keys(parsed.mcpServers).length) {
-      items.push({ id: "claude-code-mcp", name: "Claude MCP servers", kind: "mcp", agent: "claude-code", scope: "user", destination: ".claude.json", config: cleanMcp(parsed.mcpServers, requiredSecrets, "CLAUDE_MCP") });
+      const servers = commandOnlyMcp(parsed.mcpServers);
+      if (Object.keys(servers).length) items.push({ id: "claude-code-mcp", name: "Claude MCP servers", kind: "mcp", agent: "claude-code", scope: "user", destination: ".claude.json", config: servers });
     }
   }
   const codexConfig = join(home, ".codex/config.toml");
   if (await exists(codexConfig)) {
     const servers = parseCodexMcp(await readFile(codexConfig, "utf8"));
     if (Object.keys(servers).length) {
-      items.push({ id: "codex-mcp", name: "Codex MCP servers", kind: "mcp", agent: "codex", scope: "user", destination: ".codex/config.toml", config: cleanMcp(servers, requiredSecrets, "CODEX_MCP") });
+      const safeServers = commandOnlyMcp(servers);
+      if (Object.keys(safeServers).length) items.push({ id: "codex-mcp", name: "Codex MCP servers", kind: "mcp", agent: "codex", scope: "user", destination: ".codex/config.toml", config: safeServers });
     }
   }
   if (project) {
@@ -223,11 +221,14 @@ export async function scan({ home = homedir(), project, title = "Shared agent se
     const mcp = join(root, ".mcp.json");
     if (await exists(mcp)) {
       const parsed = JSON.parse(await readFile(mcp, "utf8"));
-      items.push({ id: "project-mcp", name: "Project MCP servers", kind: "mcp", agent: "shared", scope: "project", destination: ".mcp.json", config: cleanMcp(parsed.mcpServers || parsed, requiredSecrets, "PROJECT_MCP") });
+      const servers = commandOnlyMcp(parsed.mcpServers || parsed);
+      if (Object.keys(servers).length) items.push({ id: "project-mcp", name: "Project MCP servers", kind: "mcp", agent: "shared", scope: "project", destination: ".mcp.json", config: servers });
     }
   }
+  const gitGstack = items.find(item => item.name === "gstack" && item.source?.kind === "git");
+  if (gitGstack) for (const item of items) if (item !== gitGstack && item.name === "gstack" && item.source?.kind === "embedded") item.source = structuredClone(gitGstack.source);
   const bundle = { formatVersion: 1, metadata: { id: randomUUID(), title, createdAt: new Date().toISOString() }, requiredSecrets: [...requiredSecrets].sort(), items };
-  if (Buffer.byteLength(JSON.stringify(bundle)) > MAX_BUNDLE) throw new Error(`Bundle exceeds ${MAX_BUNDLE} bytes`);
+  ensureBundleFits(bundle);
   bundle.integrity = { sha256: sha256(JSON.stringify(bundle)) };
   return bundle;
 }
@@ -252,6 +253,16 @@ export function validate(bundle) {
   return bundle;
 }
 
+export function bundleByteLength(bundle) {
+  return Buffer.byteLength(JSON.stringify(bundle));
+}
+
+export function ensureBundleFits(bundle) {
+  const bytes = bundleByteLength(bundle);
+  if (bytes > MAX_BUNDLE_BYTES) throw new Error(`Bundle exceeds ${MAX_BUNDLE_BYTES} bytes`);
+  return bytes;
+}
+
 export function bundleReview(bundle) {
   validate(bundle);
   const files = [];
@@ -264,7 +275,7 @@ export function bundleReview(bundle) {
     }
     if (item.source?.kind === "git") references.push({ path: item.destination, repository: item.source.repository, commit: item.source.commit, sourcePath: item.source.path });
   }
-  return { files, skipped, references, bundleBytes: Buffer.byteLength(JSON.stringify(bundle)) };
+  return { files, skipped, references, bundleBytes: bundleByteLength(bundle) };
 }
 
 export function omitBundleFiles(bundle, selections) {
@@ -415,6 +426,7 @@ export async function doctor(home = homedir()) {
 
 export async function publish(bundlePath, { registry = process.env.AGENT_SETUP_REGISTRY_URL || "https://agent-setup-link.vercel.app", token = process.env.AGENT_SETUP_PUBLISH_TOKEN } = {}) {
   const bundle = validate(JSON.parse(await readFile(resolve(bundlePath), "utf8")));
+  ensureBundleFits(bundle);
   if (!token) throw new Error("Set AGENT_SETUP_PUBLISH_TOKEN before publishing");
   const response = await fetch(`${registry.replace(/\/$/, "")}/api/bundles`, {
     method: "POST",
@@ -428,6 +440,7 @@ export async function publish(bundlePath, { registry = process.env.AGENT_SETUP_R
 
 export async function publishBundle(bundle, { registry, token } = {}) {
   validate(bundle);
+  ensureBundleFits(bundle);
   const directory = await mkdtemp(join(tmpdir(), "rigdrop-share-"));
   const bundlePath = join(directory, "bundle.json");
   try {

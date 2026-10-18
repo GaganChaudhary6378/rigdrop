@@ -4,7 +4,7 @@ Export selected Claude Code and Codex settings into one reviewable bundle, publi
 
 **Hosted app:** [agent-setup-link.vercel.app](https://agent-setup-link.vercel.app)
 
-The CLI captures portable instruction and script files from local skills, plugins, and rules. GitHub-backed content is recorded as a commit-pinned reference instead of copied. Build output, binaries, office files, images, files over 256 KB, synced work folders, and agent caches stay local. MCP definitions are included with environment values replaced by variable placeholders.
+The CLI captures portable instruction and script files from local skills, plugins, and rules. GitHub-backed content is recorded as a commit-pinned reference instead of copied. Build output, binaries, office files, images, files over 256 KB, synced work folders, hidden agent folders, and caches stay local. MCP definitions contain server names and commands only.
 
 ## What works
 

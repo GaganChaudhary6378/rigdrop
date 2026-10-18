@@ -3,7 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
-import { bundleReview, doctor, install, loadBundle, omitBundleFiles, plan, publish, publishBundle, rollback, scan } from "./core.js";
+import { bundleReview, doctor, ensureBundleFits, install, loadBundle, omitBundleFiles, plan, publish, publishBundle, rollback, scan } from "./core.js";
 
 const [command, ...rest] = process.argv.slice(2);
 const noInputCommands = ["scan", "share", "doctor"];
@@ -23,7 +23,7 @@ function summary(bundle) {
   if (skipped.length) console.log(`Skipped ${skipped.length} non-portable or oversized file(s): ${skipped.join(", ")}`);
 }
 
-const formatBytes = bytes => bytes < 1024 ? `${bytes} B` : `${(bytes / 1024).toFixed(bytes < 1024 * 1024 ? 1 : 2)} ${bytes < 1024 * 1024 ? "KB" : "MB"}`;
+const formatBytes = bytes => bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 const printReview = bundle => {
   const review = bundleReview(bundle);
   console.log("\nFiles to upload:");
@@ -69,6 +69,7 @@ async function main() {
     });
     summary(bundle);
     let review = printReview(bundle);
+    ensureBundleFits(bundle);
     if (has("--dry-run")) {
       console.log("\nDry run complete. Nothing uploaded.");
       return;
@@ -83,6 +84,7 @@ async function main() {
             const selected = await prompt.question("Remove file numbers for this share (for example 2,5-8), or press Enter to return: ");
             if (selected.trim()) bundle = omitBundleFiles(bundle, selectedNumbers(selected, review.files));
             review = printReview(bundle);
+            ensureBundleFits(bundle);
             continue;
           }
           console.log("Upload cancelled. Nothing uploaded.");
