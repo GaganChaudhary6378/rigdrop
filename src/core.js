@@ -1,13 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile } from "node:child_process";
-import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { access, cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 const exec = promisify(execFile);
 const MAX_FILE = 512 * 1024;
-const MAX_BUNDLE = 2 * 1024 * 1024;
+const MAX_BUNDLE = 4 * 1024 * 1024;
 const deniedNames = /^(\.env(?:\..*)?|auth\.json|credentials(?:\.json)?|cookies?|id_(?:rsa|ed25519)(?:\.pub)?)$/i;
 const secretPatterns = [
   /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/,
@@ -16,6 +16,7 @@ const secretPatterns = [
   /\bAKIA[0-9A-Z]{16}\b/,
   /\b(?:sk|rk)-(?:live|test)-[A-Za-z0-9]{20,}\b/
 ];
+const knownSecretExamples = new Set(["AKIAIOSFODNN7EXAMPLE"]);
 
 export const sha256 = value => createHash("sha256").update(value).digest("hex");
 const exists = async path => access(path).then(() => true, () => false);
@@ -23,6 +24,9 @@ const safeRelative = path => {
   if (!path || isAbsolute(path) || path.split(/[\\/]/).includes("..")) throw new Error(`Unsafe path: ${path}`);
   return path;
 };
+const containsSecret = text => secretPatterns.some(pattern =>
+  [...text.matchAll(new RegExp(pattern.source, "g"))].some(match => !knownSecretExamples.has(match[0]))
+);
 const runGit = async (cwd, ...args) => (await exec("git", ["-C", cwd, ...args], { encoding: "utf8" })).stdout.trim();
 
 async function gitSource(path) {
@@ -30,7 +34,10 @@ async function gitSource(path) {
     const root = await runGit(path, "rev-parse", "--show-toplevel");
     const repository = await runGit(path, "remote", "get-url", "origin");
     if (!/^(?:https:\/\/github\.com\/|git@github\.com:)/.test(repository)) return null;
-    if (await runGit(root, "status", "--porcelain", "--", path)) return null;
+    const changes = (await runGit(root, "status", "--porcelain", "--", path))
+      .split("\n")
+      .filter(line => line && basename(line.slice(3)) !== ".DS_Store");
+    if (changes.length) return null;
     const commit = await runGit(path, "rev-parse", "HEAD");
     return {
       kind: "git",
@@ -43,29 +50,49 @@ async function gitSource(path) {
   }
 }
 
-async function embeddedSource(root) {
+function isWithin(path, root) {
+  const pathFromRoot = relative(root, path);
+  return pathFromRoot === "" || (!pathFromRoot.startsWith(`..${sep}`) && pathFromRoot !== ".." && !isAbsolute(pathFromRoot));
+}
+
+async function embeddedSource(root, allowedRoots = [dirname(root)]) {
   const files = [];
+  const skipped = [];
   const layout = (await lstat(root)).isFile() ? "file" : "directory";
-  async function walk(path, prefix = "") {
-    const stat = await lstat(path);
-    if (stat.isSymbolicLink()) throw new Error(`Refusing symlink: ${path}`);
-    if (stat.isFile()) {
+  const resolvedAllowedRoots = (await Promise.all(allowedRoots.map(async allowedRoot =>
+    await exists(allowedRoot) ? realpath(allowedRoot) : null
+  ))).filter(Boolean);
+  async function walk(path, prefix = "", ancestry = new Set()) {
+    let current = path;
+    let entry = await lstat(current);
+    if (entry.isSymbolicLink()) {
+      current = await realpath(current);
+      if (!resolvedAllowedRoots.some(allowedRoot => isWithin(current, allowedRoot))) throw new Error(`Refusing symlink outside allowed directory: ${path}`);
+      entry = await stat(current);
+    }
+    if (entry.isFile()) {
       if (deniedNames.test(basename(path))) throw new Error(`Refusing sensitive file: ${path}`);
-      if (stat.size > MAX_FILE) throw new Error(`File exceeds ${MAX_FILE} bytes: ${path}`);
-      const content = await readFile(path);
+      if (entry.size > MAX_FILE) {
+        skipped.push({ path: safeRelative(prefix || basename(path)), reason: `exceeds ${MAX_FILE} bytes` });
+        return;
+      }
+      const content = await readFile(current);
       const text = content.toString("utf8");
-      if (secretPatterns.some(pattern => pattern.test(text))) throw new Error(`Possible secret found in: ${path}`);
+      if (containsSecret(text)) throw new Error(`Possible secret found in: ${path}`);
       files.push({ path: safeRelative(prefix || basename(path)), content: content.toString("base64"), sha256: sha256(content) });
       return;
     }
-    if (!stat.isDirectory()) throw new Error(`Unsupported file type: ${path}`);
-    for (const entry of await readdir(path, { withFileTypes: true })) {
-      if ([".git", "node_modules", "dist", "coverage"].includes(entry.name) || deniedNames.test(entry.name)) continue;
-      await walk(join(path, entry.name), prefix ? `${prefix}/${entry.name}` : entry.name);
+    if (!entry.isDirectory()) throw new Error(`Unsupported file type: ${path}`);
+    const canonical = await realpath(current);
+    if (ancestry.has(canonical)) throw new Error(`Refusing symlink cycle: ${path}`);
+    const nextAncestry = new Set(ancestry).add(canonical);
+    for (const child of await readdir(current, { withFileTypes: true })) {
+      if ([".git", "node_modules", "dist", "coverage"].includes(child.name) || deniedNames.test(child.name)) continue;
+      await walk(join(current, child.name), prefix ? `${prefix}/${child.name}` : child.name, nextAncestry);
     }
   }
   await walk(root);
-  return { kind: "embedded", layout, files };
+  return { kind: "embedded", layout, files, skipped };
 }
 
 function cleanMcp(value, requiredSecrets, key = "") {
@@ -115,10 +142,10 @@ function parseCodexMcp(text) {
   return servers;
 }
 
-async function addFilesystemItems(items, path, kind, agent, destinationBase, scope = "user") {
+async function addFilesystemItems(items, path, kind, agent, destinationBase, scope = "user", excluded = [], allowedRoots) {
   if (!await exists(path)) return;
   for (const entry of await readdir(path, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || excluded.includes(entry.name)) continue;
     const sourcePath = join(path, entry.name);
     items.push({
       id: `${agent}-${kind}-${entry.name}`,
@@ -127,26 +154,27 @@ async function addFilesystemItems(items, path, kind, agent, destinationBase, sco
       agent,
       scope,
       destination: `${destinationBase}/${entry.name}`,
-      source: await gitSource(sourcePath) || await embeddedSource(sourcePath)
+      source: await gitSource(sourcePath) || await embeddedSource(sourcePath, allowedRoots)
     });
   }
 }
 
-async function addRule(items, path, agent, destination, scope = "user") {
+async function addRule(items, path, agent, destination, scope = "user", allowedRoots) {
   if (!await exists(path)) return;
-  items.push({ id: `${agent}-rules-${basename(path)}`, name: basename(path), kind: "rules", agent, scope, destination, source: await gitSource(path) || await embeddedSource(path) });
+  items.push({ id: `${agent}-rules-${basename(path)}`, name: basename(path), kind: "rules", agent, scope, destination, source: await gitSource(path) || await embeddedSource(path, allowedRoots) });
 }
 
 export async function scan({ home = homedir(), project, title = "Shared agent setup" } = {}) {
   const items = [];
   const requiredSecrets = new Set();
-  await addFilesystemItems(items, join(home, ".claude/skills"), "skill", "claude-code", ".claude/skills");
-  await addFilesystemItems(items, join(home, ".claude/plugins"), "plugin", "claude-code", ".claude/plugins");
-  await addFilesystemItems(items, join(home, ".codex/skills"), "skill", "codex", ".codex/skills");
-  await addFilesystemItems(items, join(home, ".codex/plugins"), "plugin", "codex", ".codex/plugins");
-  await addFilesystemItems(items, join(home, ".agents/skills"), "skill", "shared", ".agents/skills");
-  await addRule(items, join(home, ".claude/CLAUDE.md"), "claude-code", ".claude/CLAUDE.md");
-  await addRule(items, join(home, ".codex/AGENTS.md"), "codex", ".codex/AGENTS.md");
+  const userAgentRoots = [join(home, ".claude"), join(home, ".codex"), join(home, ".agents")];
+  await addFilesystemItems(items, join(home, ".claude/skills"), "skill", "claude-code", ".claude/skills", "user", [], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".claude/plugins"), "plugin", "claude-code", ".claude/plugins", "user", ["cache", "data", "marketplaces", "store"], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".codex/skills"), "skill", "codex", ".codex/skills", "user", [], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".codex/plugins"), "plugin", "codex", ".codex/plugins", "user", [], userAgentRoots);
+  await addFilesystemItems(items, join(home, ".agents/skills"), "skill", "shared", ".agents/skills", "user", [], userAgentRoots);
+  await addRule(items, join(home, ".claude/CLAUDE.md"), "claude-code", ".claude/CLAUDE.md", "user", userAgentRoots);
+  await addRule(items, join(home, ".codex/AGENTS.md"), "codex", ".codex/AGENTS.md", "user", userAgentRoots);
 
   const claudeConfig = join(home, ".claude.json");
   if (await exists(claudeConfig)) {
@@ -195,6 +223,7 @@ export function validate(bundle) {
       safeRelative(file.path);
       if (sha256(Buffer.from(file.content, "base64")) !== file.sha256) throw new Error(`Checksum failed: ${item.id}/${file.path}`);
     }
+    if (item.source?.kind === "embedded" && item.source.skipped && !item.source.skipped.every(file => typeof file.reason === "string" && safeRelative(file.path))) throw new Error(`Invalid skipped file: ${item.id}`);
     if (item.source?.kind === "git" && !/^[0-9a-f]{40}$/i.test(item.source.commit)) throw new Error(`Unpinned Git source: ${item.id}`);
   }
   return bundle;

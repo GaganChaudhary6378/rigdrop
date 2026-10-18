@@ -26,6 +26,11 @@ Outcome: a local bundle safely reproduces supported settings in another home dir
 - [x] Generate HTML, JSON, and Markdown views for each bundle.
 - [x] Deploy the production Vercel site with public access.
 - [x] Add one-command sharing that scans, packages, publishes, and returns a public link.
+- [x] Include symlinked setup files only when they resolve inside the owning agent directory.
+- [x] Keep documented placeholder credentials out of secret-scan false positives.
+- [x] Report oversized local files that cannot fit the public bundle.
+- [x] Exclude Claude plugin caches and marketplaces from portable plugin capture.
+- [x] Support shared bundles up to 4 MB across the CLI, API, and registry.
 - [ ] Apply the Supabase migration and verify the production publish/read/install flow.
 
 Outcome: a sender can share one public URL that another agent can inspect and install.

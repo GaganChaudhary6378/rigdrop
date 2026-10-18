@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 import { install, rollback, scan, share, validate } from "../src/core.js";
 import { bundleUrls, renderBundlePage, renderInstructions } from "../src/hosted.js";
+
+const exec = promisify(execFile);
 
 test("scan replaces MCP values and installs embedded skills", async () => {
   const sender = await mkdtemp(join(tmpdir(), "agent-setup-sender-"));
@@ -30,6 +34,87 @@ test("scan rejects an embedded private key", async () => {
   await mkdir(join(sender, ".codex/skills/demo"), { recursive: true });
   await writeFile(join(sender, ".codex/skills/demo/SKILL.md"), "-----BEGIN PRIVATE KEY-----\nsecret");
   await assert.rejects(scan({ home: sender }), /Possible secret/);
+});
+
+test("scan allows the documented AWS example key", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-example-key-"));
+  await mkdir(join(sender, ".codex/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".codex/skills/demo/SKILL.md"), "Example: AKIAIOSFODNN7EXAMPLE\n");
+  const bundle = await scan({ home: sender });
+  assert.equal(bundle.items.length, 1);
+});
+
+test("scan skips oversized embedded files and records the omission", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-large-file-"));
+  await mkdir(join(sender, ".codex/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".codex/skills/demo/SKILL.md"), "# Demo\n");
+  await writeFile(join(sender, ".codex/skills/demo/asset.bin"), Buffer.alloc(513 * 1024));
+  const bundle = await scan({ home: sender });
+  assert.deepEqual(bundle.items[0].source.skipped, [{ path: "asset.bin", reason: "exceeds 524288 bytes" }]);
+  assert.equal(bundle.items[0].source.files.length, 1);
+});
+
+test("scan ignores Claude plugin cache directories", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-plugin-cache-"));
+  await mkdir(join(sender, ".claude/plugins/cache/plugin"), { recursive: true });
+  await mkdir(join(sender, ".claude/plugins/synced/plugin"), { recursive: true });
+  await writeFile(join(sender, ".claude/plugins/cache/plugin/SKILL.md"), "-----BEGIN PRIVATE KEY-----\n");
+  await writeFile(join(sender, ".claude/plugins/synced/plugin/SKILL.md"), "# Portable plugin\n");
+  const bundle = await scan({ home: sender });
+  assert.equal(bundle.items.length, 1);
+  assert.equal(bundle.items[0].name, "synced");
+});
+
+test("scan keeps a clean GitHub skill as a pinned reference despite .DS_Store", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-git-skill-"));
+  const skill = join(sender, ".claude/skills/demo");
+  await mkdir(skill, { recursive: true });
+  await exec("git", ["-C", skill, "init", "--quiet"]);
+  await exec("git", ["-C", skill, "config", "user.name", "Test User"]);
+  await exec("git", ["-C", skill, "config", "user.email", "test@example.com"]);
+  await writeFile(join(skill, "SKILL.md"), "# Demo\n");
+  await exec("git", ["-C", skill, "add", "SKILL.md"]);
+  await exec("git", ["-C", skill, "commit", "--quiet", "-m", "Initial"]);
+  await exec("git", ["-C", skill, "remote", "add", "origin", "https://github.com/example/demo.git"]);
+  await writeFile(join(skill, ".DS_Store"), "noise");
+
+  const bundle = await scan({ home: sender });
+  assert.equal(bundle.items[0].source.kind, "git");
+  assert.equal(bundle.items[0].source.repository, "https://github.com/example/demo");
+});
+
+test("scan follows symlinks that stay inside an agent directory", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-internal-link-"));
+  await mkdir(join(sender, ".claude/skills/gstack"), { recursive: true });
+  await mkdir(join(sender, ".claude/skills/_gstack-command"), { recursive: true });
+  await writeFile(join(sender, ".claude/skills/gstack/SKILL.md"), "# Gstack\n");
+  await symlink("../gstack/SKILL.md", join(sender, ".claude/skills/_gstack-command/SKILL.md"));
+
+  const bundle = await scan({ home: sender });
+  const command = bundle.items.find(item => item.name === "_gstack-command");
+  assert.equal(command.source.files[0].path, "SKILL.md");
+  assert.equal(Buffer.from(command.source.files[0].content, "base64").toString("utf8"), "# Gstack\n");
+});
+
+test("scan follows links between known agent directories", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-agent-link-"));
+  await mkdir(join(sender, ".claude/skills/gstack"), { recursive: true });
+  await mkdir(join(sender, ".codex/skills/gstack"), { recursive: true });
+  await writeFile(join(sender, ".claude/skills/gstack/ETHOS.md"), "# Ethos\n");
+  await symlink(join(sender, ".claude/skills/gstack/ETHOS.md"), join(sender, ".codex/skills/gstack/ETHOS.md"));
+
+  const bundle = await scan({ home: sender });
+  const codexSkill = bundle.items.find(item => item.agent === "codex");
+  assert.equal(Buffer.from(codexSkill.source.files[0].content, "base64").toString("utf8"), "# Ethos\n");
+});
+
+test("scan rejects symlinks that resolve outside an agent directory", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-external-link-"));
+  const external = await mkdtemp(join(tmpdir(), "rigdrop-external-target-"));
+  await mkdir(join(sender, ".claude/skills/demo"), { recursive: true });
+  await writeFile(join(external, "SKILL.md"), "# External\n");
+  await symlink(join(external, "SKILL.md"), join(sender, ".claude/skills/demo/SKILL.md"));
+  await assert.rejects(scan({ home: sender }), /symlink outside allowed directory/);
 });
 
 test("validate rejects tampering", async () => {

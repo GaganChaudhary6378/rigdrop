@@ -14,7 +14,7 @@ export default async function handler(request, response) {
   if (!process.env.PUBLISH_TOKEN || !same(token, process.env.PUBLISH_TOKEN)) return response.status(401).json({ error: "Invalid publishing token" });
   try {
     const bundle = validate(typeof request.body === "string" ? JSON.parse(request.body) : request.body);
-    if (Buffer.byteLength(JSON.stringify(bundle)) > 2 * 1024 * 1024) return response.status(413).json({ error: "Bundle exceeds 2 MB" });
+    if (Buffer.byteLength(JSON.stringify(bundle)) > 4 * 1024 * 1024) return response.status(413).json({ error: "Bundle exceeds 4 MB" });
     const database = await fetch(`${process.env.SUPABASE_URL}/rest/v1/bundles`, {
       method: "POST",
       headers: {
