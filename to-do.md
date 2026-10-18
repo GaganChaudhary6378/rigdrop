@@ -25,6 +25,7 @@ Outcome: a local bundle safely reproduces supported settings in another home dir
 - [x] Connect CLI publishing, inspection, and installation to hosted bundle URLs.
 - [x] Generate HTML, JSON, and Markdown views for each bundle.
 - [x] Deploy the production Vercel site with public access.
+- [x] Add one-command sharing that scans, packages, publishes, and returns a public link.
 - [ ] Apply the Supabase migration and verify the production publish/read/install flow.
 
 Outcome: a sender can share one public URL that another agent can inspect and install.

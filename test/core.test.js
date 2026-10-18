@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { install, rollback, scan, validate } from "../src/core.js";
+import { install, rollback, scan, share, validate } from "../src/core.js";
 import { bundleUrls, renderBundlePage, renderInstructions } from "../src/hosted.js";
 
 test("scan replaces MCP values and installs embedded skills", async () => {
@@ -75,4 +75,23 @@ test("hosted formats expose stable agent-readable links", () => {
   assert.equal(urls.manifest, `https://example.com/s/${row.slug}/manifest.json`);
   assert.match(renderInstructions(row, "https://example.com"), /rigdrop install/);
   assert.match(renderBundlePage(row, "https://example.com"), /Demo &lt;setup&gt;/);
+});
+
+test("share scans and publishes a temporary bundle", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-share-"));
+  await mkdir(join(sender, ".agents/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".agents/skills/demo/SKILL.md"), "# Demo\n");
+  const originalFetch = globalThis.fetch;
+  let received;
+  globalThis.fetch = async (_url, options) => {
+    received = JSON.parse(options.body);
+    return { ok: true, json: async () => ({ page: "https://example.com/s/share123" }) };
+  };
+  try {
+    const result = await share({ home: sender, registry: "https://example.com", token: "test-token" });
+    assert.equal(result.page, "https://example.com/s/share123");
+    assert.equal(received.items[0].name, "demo");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

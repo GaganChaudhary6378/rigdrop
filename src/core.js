@@ -341,3 +341,16 @@ export async function publish(bundlePath, { registry = process.env.AGENT_SETUP_R
   if (!response.ok) throw new Error(result.error || `Publishing failed: ${response.status}`);
   return result.page;
 }
+
+export async function share({ home = homedir(), project, title, registry, token } = {}) {
+  const directory = await mkdtemp(join(tmpdir(), "rigdrop-share-"));
+  const bundlePath = join(directory, "bundle.json");
+  try {
+    const bundle = await scan({ home, project, title });
+    await writeFile(bundlePath, `${JSON.stringify(bundle, null, 2)}\n`);
+    const page = await publish(bundlePath, { registry, token });
+    return { bundle, page };
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}

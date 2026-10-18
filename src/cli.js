@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 import { writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { doctor, install, loadBundle, plan, publish, rollback, scan } from "./core.js";
+import { doctor, install, loadBundle, plan, publish, rollback, scan, share } from "./core.js";
 
 const [command, ...rest] = process.argv.slice(2);
-const input = command === "scan" || command === "doctor" ? undefined : rest[0];
-const args = command === "scan" || command === "doctor" ? rest : rest.slice(1);
+const noInputCommands = ["scan", "share", "doctor"];
+const input = noInputCommands.includes(command) ? undefined : rest[0];
+const args = noInputCommands.includes(command) ? rest : rest.slice(1);
 const value = name => {
   const index = args.indexOf(name);
   return index >= 0 ? args[index + 1] : undefined;
@@ -27,6 +28,18 @@ async function main() {
     console.log(`Wrote ${out}`);
     return;
   }
+  if (command === "share") {
+    const result = await share({
+      project: value("--project"),
+      title: value("--title"),
+      registry: value("--registry"),
+      token: process.env.AGENT_SETUP_PUBLISH_TOKEN
+    });
+    summary(result.bundle);
+    console.log(`\nShared setup: ${result.page}`);
+    console.log(`Paste this link into an agent: ${result.page}/AGENT_SETUP.md`);
+    return;
+  }
   if (command === "inspect") {
     summary(await loadBundle(input));
     return;
@@ -41,7 +54,7 @@ async function main() {
       return;
     }
     const journal = await install(bundle, { project: value("--project"), force: has("--force") });
-    console.log(`Installed. Roll back with: agent-setup rollback ${journal.id}`);
+    console.log(`Installed. Roll back with: rigdrop rollback ${journal.id}`);
     return;
   }
   if (command === "rollback") {
@@ -58,7 +71,7 @@ async function main() {
     console.log(await publish(input, { registry: value("--registry"), token: process.env.AGENT_SETUP_PUBLISH_TOKEN }));
     return;
   }
-  console.log("RigDrop\n\nCommands:\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL\n  install FILE_OR_URL [--project PATH] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  doctor\n  publish BUNDLE_FILE [--registry URL]");
+  console.log("RigDrop\n\nCommands:\n  share [--project PATH] [--title NAME] [--registry URL]\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL\n  install FILE_OR_URL [--project PATH] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  doctor\n  publish BUNDLE_FILE [--registry URL]");
 }
 
 main().catch(error => {

@@ -24,51 +24,52 @@ No bundle scripts are executed. Secret values are never written into a bundle.
 - Git, when a bundle contains a GitHub reference
 - A publishing token for adding bundles to the hosted registry
 
-## Setup
+## Use RigDrop directly
 
 ```sh
-git clone https://github.com/GaganChaudhary6378/rigdrop.git
-cd rigdrop
-npm link
-agent-setup doctor
+npx --yes github:GaganChaudhary6378/rigdrop doctor
 ```
 
-There are no runtime dependencies and no build step.
+There are no runtime dependencies or installation step. `npx` downloads and runs the GitHub version for the command, then caches it locally.
 
 ## Create and share a setup
 
 ```sh
-agent-setup scan
-agent-setup scan --project /path/to/project --out team.bundle.json
-agent-setup inspect team.bundle.json
-agent-setup publish team.bundle.json
+npx --yes github:GaganChaudhary6378/rigdrop share
+npx --yes github:GaganChaudhary6378/rigdrop share --project /path/to/project --title "Team setup"
 ```
 
-Set the private publishing token and publish:
+Set the private publishing token first:
 
 ```sh
 set -a; source .env.local; set +a
-agent-setup publish team.bundle.json
+npx --yes github:GaganChaudhary6378/rigdrop share
 ```
 
-The local `.env.local` file is ignored by Git. Never commit it or paste its token into a bundle.
+`share` scans the setup, creates a temporary bundle, publishes it, prints one unique public link, then removes the temporary bundle. The local `.env.local` file is ignored by Git. Never commit it or paste its token into a bundle.
 
-`publish` displays the public bundle URL. Anyone with the link can read the embedded local files, so inspect the bundle before publishing.
+Anyone with the link can read embedded local files, so use the advanced two-step flow when you want to inspect before publishing:
+
+```sh
+npx --yes github:GaganChaudhary6378/rigdrop scan --out team.bundle.json
+npx --yes github:GaganChaudhary6378/rigdrop inspect team.bundle.json
+npx --yes github:GaganChaudhary6378/rigdrop publish team.bundle.json
+```
 
 ## Install a shared setup
 
 Preview only, then apply:
 
 ```sh
-agent-setup install https://agent-setup-link.vercel.app/s/BUNDLE_ID
-agent-setup install https://agent-setup-link.vercel.app/s/BUNDLE_ID --project /path/to/project --yes
+npx --yes github:GaganChaudhary6378/rigdrop inspect https://agent-setup-link.vercel.app/s/BUNDLE_ID
+npx --yes github:GaganChaudhary6378/rigdrop install https://agent-setup-link.vercel.app/s/BUNDLE_ID --project /path/to/project --yes
 ```
 
 Existing destinations are kept. Use `--force` to replace them after a backup:
 
 ```sh
-agent-setup install team.bundle.json --yes --force
-agent-setup rollback INSTALLATION_ID
+npx --yes github:GaganChaudhary6378/rigdrop install team.bundle.json --yes --force
+npx --yes github:GaganChaudhary6378/rigdrop rollback INSTALLATION_ID
 ```
 
 Installation journals and backups live in `~/.agent-setup-link/installations` and `~/.agent-setup-link/backups`.
@@ -91,6 +92,15 @@ Bundles are JSON. Every embedded file has a SHA-256 digest. GitHub sources conta
 See the [product draft](docs/product-draft.md), [technical plan](docs/technical-plan.md), and [example bundle](examples/agent-setup.bundle.yaml).
 
 ## Development
+
+For contributors only:
+
+```sh
+git clone https://github.com/GaganChaudhary6378/rigdrop.git
+cd rigdrop
+npm link
+rigdrop doctor
+```
 
 ```sh
 npm test

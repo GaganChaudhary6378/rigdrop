@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "description": "Share Claude Code and Codex setup through a safe, reviewable bundle.",
   "type": "module",
-  "bin": { "agent-setup": "./src/cli.js" },
+  "bin": { "rigdrop": "./src/cli.js" },
   "scripts": {
     "test": "node --test",
     "check": "node --check src/cli.js && node --check src/core.js && node --check src/hosted.js && node --check api/publish.js && node --check api/read.js && node --check api/health.js"

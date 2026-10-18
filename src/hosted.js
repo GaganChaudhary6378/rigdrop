@@ -42,7 +42,7 @@ export function renderBundlePage(row, origin) {
   <section class="stats"><div><b>${bundle.items.length}</b><span>items</span></div><div><b>${bundle.requiredSecrets.length}</b><span>secrets required</span></div></section>
   <section><h2>Included setup</h2><ul class="items">${items || "<li>No items</li>"}</ul></section>
   <section><h2>Required environment variables</h2><p>${secrets}</p><p class="muted">Names are shared. Values never enter the bundle.</p></section>
-  <section><h2>Use with an agent</h2><pre><code>agent-setup inspect ${urls.page}\nagent-setup install ${urls.page} --yes</code></pre></section>
+  <section><h2>Use with an agent</h2><pre><code>npx --yes github:GaganChaudhary6378/rigdrop inspect ${urls.page}\nnpx --yes github:GaganChaudhary6378/rigdrop install ${urls.page} --yes</code></pre></section>
   <section class="links"><a href="${urls.manifest}">Raw manifest</a><a href="${urls.instructions}">Agent instructions</a></section>
   <footer>SHA-256 <code>${escapeHtml(row.checksum)}</code></footer>
 </main></body></html>`;
