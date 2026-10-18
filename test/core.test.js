@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { gunzipSync, gzipSync } from "node:zlib";
 import publishHandler from "../api/publish.js";
 import { currentSession, login, LOGIN_PORT } from "../src/auth.js";
-import { bundleReview, excludeFromBundle, install, omitBundleFiles, reviewBundle, rollback, scan, sha256, share, validate } from "../src/core.js";
+import { bundleDigest, bundleReview, excludeFromBundle, install, omitBundleFiles, reviewBundle, rollback, scan, sha256, share, validate } from "../src/core.js";
 import { commandText } from "../src/sources.js";
 import { bundleUrls, renderBundlePage, renderInstructions } from "../src/hosted.js";
 
@@ -470,4 +470,18 @@ test("install runs source commands and recreates linked clones", async () => {
   } finally {
     for (const key of Object.keys(gitEnv)) delete process.env[key];
   }
+});
+
+test("bundle digest survives storage that reorders object keys", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-key-order-"));
+  await mkdir(join(sender, ".agents/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".agents/skills/demo/SKILL.md"), "# Demo\n");
+  const bundle = await scan({ home: sender });
+  const reorder = value => Array.isArray(value) ? value.map(reorder)
+    : value && typeof value === "object" ? Object.fromEntries(Object.entries(value).reverse().map(([key, item]) => [key, reorder(item)])) : value;
+  const stored = reorder(bundle);
+  assert.notEqual(JSON.stringify(stored), JSON.stringify(bundle));
+  validate(stored);
+  const { integrity, ...body } = bundle;
+  assert.equal(integrity.sha256, bundleDigest(body));
 });

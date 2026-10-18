@@ -23,6 +23,11 @@ const secretPatterns = [
 const knownSecretExamples = new Set(["AKIAIOSFODNN7EXAMPLE"]);
 
 export const sha256 = value => createHash("sha256").update(value).digest("hex");
+// Sorted keys: storage (Postgres jsonb) does not keep key order, so the digest must not depend on it.
+const canonicalJson = value => JSON.stringify(value, (_key, item) => item && typeof item === "object" && !Array.isArray(item)
+  ? Object.fromEntries(Object.entries(item).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0))
+  : item);
+export const bundleDigest = body => sha256(canonicalJson(body));
 const exists = async path => access(path).then(() => true, () => false);
 const safeRelative = path => {
   if (!path || isAbsolute(path) || path.split(/[\\/]/).includes("..")) throw new Error(`Unsafe path: ${path}`);
@@ -206,7 +211,7 @@ export async function scan({ home = homedir(), project, title = "Shared agent se
   if (gitGstack) for (const item of items) if (item !== gitGstack && item.name === "gstack" && item.source?.kind === "embedded") item.source = structuredClone(gitGstack.source);
   const bundle = { formatVersion: 1, metadata: { id: randomUUID(), title, createdAt: new Date().toISOString() }, requiredSecrets: [...requiredSecrets].sort(), items, notes: sources.notes };
   ensureBundleFits(bundle);
-  bundle.integrity = { sha256: sha256(JSON.stringify(bundle)) };
+  bundle.integrity = { sha256: bundleDigest(bundle) };
   return bundle;
 }
 
@@ -216,7 +221,8 @@ export function validate(bundle) {
   if (!Array.isArray(bundle.requiredSecrets) || bundle.requiredSecrets.some(name => typeof name !== "string" || !/^[A-Z_][A-Z0-9_]*$/.test(name))) throw new Error("Invalid required secrets");
   if (bundle.notes !== undefined && (!Array.isArray(bundle.notes) || bundle.notes.some(note => typeof note !== "string"))) throw new Error("Invalid bundle notes");
   const { integrity, ...body } = bundle;
-  if (sha256(JSON.stringify(body)) !== integrity.sha256) throw new Error("Bundle integrity check failed");
+  // The second digest accepts bundle files made before canonical digests.
+  if (![bundleDigest(body), sha256(JSON.stringify(body))].includes(integrity.sha256)) throw new Error("Bundle integrity check failed");
   for (const item of bundle.items) {
     if (typeof item.id !== "string" || typeof item.name !== "string" || typeof item.agent !== "string" || !["skill", "plugin", "rules", "mcp", "source"].includes(item.kind) || !["user", "project"].includes(item.scope)) throw new Error(`Invalid item: ${item.id}`);
     safeRelative(item.destination);
@@ -317,7 +323,7 @@ export function reviewBundle(bundle) {
 
 function seal(bundle) {
   const { integrity, ...body } = bundle;
-  return { ...body, integrity: { sha256: sha256(JSON.stringify(body)) } };
+  return { ...body, integrity: { sha256: bundleDigest(body) } };
 }
 
 // Removes whole items by ID and single files by review path.
@@ -344,7 +350,7 @@ export function omitBundleFiles(bundle, selections) {
     return item.source.files.length ? [item] : [];
   });
   const { integrity, ...body } = next;
-  next.integrity = { sha256: sha256(JSON.stringify(body)) };
+  next.integrity = { sha256: bundleDigest(body) };
   return validate(next);
 }
 

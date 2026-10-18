@@ -47,9 +47,12 @@ Outcome: a sender can share one public URL that another agent can inspect and in
 - [x] Add owner-only `unpublish` through RLS and a limit of 20 bundles per account in 24 hours.
 - [x] Show the review on the bundle page, `AGENT_SETUP.md`, and `review.json`.
 - [x] Add the `rigdrop-review` skill and the `add-skill` command for Claude Code and Codex.
-- [ ] Create the Google OAuth client and enable Google in Supabase Auth.
-- [ ] Apply all migrations, set Vercel env vars, remove `PUBLISH_TOKEN` from Vercel, and deploy.
-- [ ] Verify with two accounts: A logs in, shares, and unpublishes; B reads without login and cannot delete A's bundle.
+- [x] Create the Google OAuth client and enable Google in Supabase Auth.
+- [x] Apply all migrations, set Vercel env vars, remove `PUBLISH_TOKEN` from Vercel, and deploy.
+- [x] Verify with two accounts (2026-10-19): A logged in and shared; anonymous read of page, manifest, review, and AGENT_SETUP.md worked; B could not delete A's bundle through the API or Supabase RLS, and could not insert directly; A unpublished.
+- [x] Fix: Postgres jsonb reorders keys, so downloaded bundles failed the integrity check. Digest now uses sorted keys (old digests still accepted).
+- [ ] Push and deploy the digest fix, then re-run share → install from the live link.
+- [ ] Fix MCP capture: it keeps only `command`, so servers that need arguments (for example `uvx serena ...`) and local absolute paths do not work on the receiver.
 
 Outcome: anyone can publish under their own account, with no shared secret in the open-source CLI.
 
