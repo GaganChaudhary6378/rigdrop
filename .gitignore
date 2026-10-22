@@ -12,4 +12,6 @@ dist/
 .serena/
 .vercel/
 .vercel
+docs/
+.wrangler/
 .env*

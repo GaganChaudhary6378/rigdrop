@@ -354,12 +354,12 @@ export function omitBundleFiles(bundle, selections) {
   return validate(next);
 }
 
-export async function loadBundle(input) {
+export async function loadBundle(input, { passcode } = {}) {
   if (!/^https?:/.test(input)) return validate(JSON.parse(await readFile(resolve(input), "utf8")));
   let url = input;
   if (/\/s\/[0-9a-f]{32}\/?$/i.test(url)) url = `${url.replace(/\/$/, "")}/manifest.json`;
-  const response = await fetch(url, { headers: { "User-Agent": "agent-setup-link" } });
-  if (!response.ok) throw new Error(`Download failed: ${response.status}`);
+  const response = await fetch(url, { headers: { "User-Agent": "agent-setup-link", ...(passcode ? { "X-RigDrop-Passcode": passcode } : {}) } });
+  if (!response.ok) throw new Error(response.status === 401 ? "This private bundle needs its passcode. Use --passcode PASSWORD." : `Download failed: ${response.status}`);
   return validate(await response.json());
 }
 
@@ -533,14 +533,16 @@ export async function doctor(home = homedir()) {
   return Promise.all([".claude", ".codex", ".agents/skills"].map(async path => ({ path, found: await exists(join(home, path)) })));
 }
 
-export async function publish(bundlePath, { registry, token } = {}) {
+export async function publish(bundlePath, { registry, token, access = "public", passcode } = {}) {
   const bundle = validate(JSON.parse(await readFile(resolve(bundlePath), "utf8")));
   ensureBundleFits(bundle);
   if (!registry || !token) throw new Error("Run rigdrop login first");
+  if (!["public", "private"].includes(access)) throw new Error("Sharing mode must be public or private");
+  if (access === "private" && !passcode) throw new Error("Private bundles need a passcode");
   const response = await fetch(`${registry.replace(/\/$/, "")}/api/bundles`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify(bundle)
+    body: JSON.stringify({ bundle, access, passcode })
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error([result.error || `Publishing failed: ${response.status}`, ...(result.review?.blockers || [])].join("\n- "));
@@ -559,21 +561,21 @@ export async function unpublish(url, { registry, token } = {}) {
   return slug;
 }
 
-export async function publishBundle(bundle, { registry, token } = {}) {
+export async function publishBundle(bundle, { registry, token, access, passcode } = {}) {
   validate(bundle);
   ensureBundleFits(bundle);
   const directory = await mkdtemp(join(tmpdir(), "rigdrop-share-"));
   const bundlePath = join(directory, "bundle.json");
   try {
     await writeFile(bundlePath, `${JSON.stringify(bundle, null, 2)}\n`);
-    const page = await publish(bundlePath, { registry, token });
+    const page = await publish(bundlePath, { registry, token, access, passcode });
     return page;
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
 }
 
-export async function share({ home = homedir(), project, title, registry, token } = {}) {
+export async function share({ home = homedir(), project, title, registry, token, access, passcode } = {}) {
   const bundle = await scan({ home, project, title });
-  return { bundle, page: await publishBundle(bundle, { registry, token }) };
+  return { bundle, page: await publishBundle(bundle, { registry, token, access, passcode }) };
 }

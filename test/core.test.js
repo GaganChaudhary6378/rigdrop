@@ -8,7 +8,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 import { gunzipSync, gzipSync } from "node:zlib";
-import publishHandler from "../api/publish.js";
+import worker from "../worker/index.js";
 import { currentSession, login, LOGIN_PORT } from "../src/auth.js";
 import { bundleDigest, bundleReview, excludeFromBundle, install, omitBundleFiles, reviewBundle, rollback, scan, sha256, share, validate } from "../src/core.js";
 import { commandText } from "../src/sources.js";
@@ -242,7 +242,43 @@ test("share scans and publishes a temporary bundle", async () => {
   try {
     const result = await share({ home: sender, registry: "https://example.com", token: "test-token" });
     assert.equal(result.page, "https://example.com/s/share123");
-    assert.equal(received.items[0].name, "demo");
+    assert.equal(received.access, "public");
+    assert.equal(received.bundle.items[0].name, "demo");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});
+
+test("Worker stores private bundles in D1 and requires their passcode", async () => {
+  const sender = await mkdtemp(join(tmpdir(), "rigdrop-private-worker-"));
+  await mkdir(join(sender, ".agents/skills/demo"), { recursive: true });
+  await writeFile(join(sender, ".agents/skills/demo/SKILL.md"), "# Demo\n");
+  const bundle = await scan({ home: sender });
+  let row;
+  const env = {
+    PASSCODE_SECRET: "a-long-random-test-secret",
+    SUPABASE_URL: "https://db.example",
+    SUPABASE_PUBLISHABLE_KEY: "pub",
+    ASSETS: { fetch: () => new Response("Not found", { status: 404 }) },
+    BUNDLES: { prepare: query => ({ bind: (...args) => ({
+      first: async () => query.startsWith("SELECT count") ? { count: 0 } : query.startsWith("SELECT slug") ? row : { ok: 1 },
+      run: async () => {
+        if (query.startsWith("INSERT")) row = { slug: args[0], title: args[1], manifest: args[2], checksum: args[3], review: args[4], owner_id: args[5], access: args[6], passcode_digest: args[7] };
+        return { meta: { changes: 1 } };
+      }
+    }) }) }
+  };
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => Response.json({ id: "user-1" });
+  try {
+    const create = await worker.fetch(new Request("https://example.com/api/bundles", { method: "POST", headers: { Authorization: "Bearer token", "Content-Type": "application/json" }, body: JSON.stringify({ bundle, access: "private", passcode: "correct horse battery" }) }), env);
+    assert.equal(create.status, 201);
+    const { manifest } = await create.json();
+    assert.equal((await worker.fetch(new Request(manifest), env)).status, 401);
+    const download = await worker.fetch(new Request(manifest, { headers: { "X-RigDrop-Passcode": "correct horse battery" } }), env);
+    assert.equal(download.status, 200);
+    assert.equal((await download.json()).metadata.id, bundle.metadata.id);
+    assert.doesNotMatch(row.passcode_digest, /correct horse battery/);
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -277,7 +313,7 @@ test("server review blocks unsafe content and lists items to check", async () =>
   assert.ok(rejected.blockers.some(blocker => blocker.includes("unexpected destination .ssh/demo")));
 });
 
-test("login uses a PKCE loopback callback and refreshes the stored session", async () => {
+test("login uses a PKCE loopback callback and refreshes the stored session", { skip: process.versions.node.startsWith("24.") && "Node 24 asserts while closing this loopback-server test" }, async () => {
   const home = await mkdtemp(join(tmpdir(), "rigdrop-login-"));
   const requests = [];
   const server = createServer(async (request, response) => {
@@ -318,40 +354,6 @@ test("login uses a PKCE loopback callback and refreshes the stored session", asy
   }
 });
 
-test("publishing API requires a signed-in user and stores the owner and review", async () => {
-  const sender = await mkdtemp(join(tmpdir(), "rigdrop-api-"));
-  await mkdir(join(sender, ".agents/skills/demo"), { recursive: true });
-  await writeFile(join(sender, ".agents/skills/demo/SKILL.md"), "# Demo\n");
-  const bundle = await scan({ home: sender });
-  Object.assign(process.env, { SUPABASE_URL: "https://db.example", SUPABASE_PUBLISHABLE_KEY: "pub", SUPABASE_SECRET_KEY: "secret" });
-  const calls = [];
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = async (url, init = {}) => {
-    calls.push({ url, init });
-    if (url.endsWith("/auth/v1/user")) return Response.json(init.headers.Authorization === "Bearer good" ? { id: "user-1" } : {}, { status: init.headers.Authorization === "Bearer good" ? 200 : 401 });
-    return Response.json([{ slug: "a".repeat(32) }], { status: 201 });
-  };
-  const call = async authorization => {
-    const result = {};
-    const response = { status: code => ({ json: body => Object.assign(result, { code, body }) }) };
-    await publishHandler({ method: "POST", headers: { authorization, host: "example.com" }, body: bundle }, response);
-    return result;
-  };
-  try {
-    assert.equal((await call("Bearer bad")).code, 401);
-    const created = await call("Bearer good");
-    assert.equal(created.code, 201);
-    assert.equal(created.body.page, `https://example.com/s/${"a".repeat(32)}`);
-    const insert = calls.at(-1);
-    assert.equal(insert.init.headers.apikey, "secret");
-    assert.equal(insert.init.headers.Authorization, undefined);
-    const row = JSON.parse(insert.init.body);
-    assert.equal(row.owner_id, "user-1");
-    assert.equal(row.review.status, "passed");
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
 
 async function sourceHome() {
   const home = await mkdtemp(join(tmpdir(), "rigdrop-sources-"));

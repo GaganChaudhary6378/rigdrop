@@ -2,7 +2,7 @@
 
 Export selected Claude Code and Codex settings into one reviewable bundle, publish it to an agent-readable URL, and install it on another machine.
 
-**Hosted app:** [agent-setup-link.vercel.app](https://agent-setup-link.vercel.app)
+**Hosted service:** [rigdrop.rigdrop.workers.dev](https://rigdrop.rigdrop.workers.dev) (Cloudflare Worker API).
 
 The CLI finds how each skill and plugin was installed and shares the install source instead of copies of the files. It captures portable instruction and script files only for skills, plugins, and rules that have no known source. GitHub-backed content is recorded as a commit-pinned reference instead of copied. Build output, binaries, office files, images, files over 256 KB, synced work folders, hidden agent folders, and caches stay local. MCP definitions contain server names and commands only.
 
@@ -41,7 +41,7 @@ Then use plain language in the Claude Code CLI or IDE extension, or in Codex:
 | You say | The agent does |
 |---|---|
 | "Share my setup" or `/rigdrop-share` | Signs you in if needed, shows the grouped list, removes what you name, publishes, and gives you the link |
-| "Install this setup: https://agent-setup-link.vercel.app/s/ID" or `/rigdrop-review URL` | Reviews the files, commands, and sources, gives a verdict, and installs after you approve |
+| "Install this setup: https://rigdrop.rigdrop.workers.dev/s/ID" or `/rigdrop-review URL` | Reviews the files, commands, and sources, gives a verdict, and installs after you approve |
 
 ## Install sources
 
@@ -81,12 +81,19 @@ npx --yes github:GaganChaudhary6378/rigdrop share --project /path/to/project --t
 
 `login` opens Google sign-in in the browser and receives the result on `http://127.0.0.1:53682/callback`. The session is stored in `~/.rigdrop/session.json` (mode `0600`) and refreshes automatically. It never enters a bundle. Use `whoami` to check the account and `logout` to end the session.
 
-`share` scans the setup, creates a temporary bundle, publishes it under your account, prints one unique public link, then removes the temporary bundle. The server repeats the secret, path, file type, and MCP checks and rejects the bundle if one fails. Each account can publish 20 bundles in 24 hours.
+`share` scans the setup, lets you choose **public** (no password) or **private** (a team passcode), publishes it under your account, prints one unique link, then removes the temporary bundle. Private bundles require the passcode for the manifest, review, and instructions endpoints; D1 stores an HMAC digest, never the passcode. The server repeats bundle validation and rejects malformed uploads. Each account can publish 20 bundles in 24 hours.
+
+For an automated private share, provide the mode and passcode explicitly:
+
+```sh
+npx --yes github:GaganChaudhary6378/rigdrop share --private --passcode "team-only-passcode" --yes
+npx --yes github:GaganChaudhary6378/rigdrop install https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID --passcode "team-only-passcode" --yes
+```
 
 Remove a bundle you published:
 
 ```sh
-npx --yes github:GaganChaudhary6378/rigdrop unpublish https://agent-setup-link.vercel.app/s/BUNDLE_ID
+npx --yes github:GaganChaudhary6378/rigdrop unpublish https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID
 ```
 
 Before upload, `share` lists the install sources, every included file, its size, the total upload size, Git references, and excluded paths. Use `e` to remove file numbers for that one share, `--exclude ITEM_ID_OR_PATH` to remove items or files without a prompt, `--dry-run` to review without upload, or `--yes` for a noninteractive upload. Add `--json` for output that an agent can read.
@@ -110,7 +117,7 @@ npx --yes github:GaganChaudhary6378/rigdrop add-skill
 Then, in Claude Code:
 
 ```text
-/rigdrop-review https://agent-setup-link.vercel.app/s/BUNDLE_ID
+/rigdrop-review https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID
 ```
 
 In Codex, ask it to review the RigDrop link. The skill reads the files, the server review report (`/s/BUNDLE_ID/review.json`), MCP commands, scripts, and rules, then gives a verdict. It installs nothing without your approval.
@@ -120,8 +127,8 @@ In Codex, ask it to review the RigDrop link. The skill reads the files, the serv
 Preview only, then apply:
 
 ```sh
-npx --yes github:GaganChaudhary6378/rigdrop inspect https://agent-setup-link.vercel.app/s/BUNDLE_ID
-npx --yes github:GaganChaudhary6378/rigdrop install https://agent-setup-link.vercel.app/s/BUNDLE_ID --project /path/to/project --yes
+npx --yes github:GaganChaudhary6378/rigdrop inspect https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID
+npx --yes github:GaganChaudhary6378/rigdrop install https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID --project /path/to/project --yes
 ```
 
 The preview lists every destination and every command that the install runs. Skip items with `--exclude ITEM_ID`. Existing destinations are kept. Use `--force` to replace them after a backup:
@@ -148,7 +155,7 @@ Codex TOML support reads only `[mcp_servers.NAME]` sections and their `env` tabl
 
 Bundles are JSON. Embedded portable files are gzip-compressed and each has a SHA-256 digest of its original content. GitHub sources contain a repository URL, an exact commit, and a path. The whole bundle also has an integrity digest.
 
-See the [product draft](docs/product-draft.md), [technical plan](docs/technical-plan.md), and [example bundle](examples/agent-setup.bundle.yaml).
+See the [example bundle](examples/agent-setup.bundle.yaml).
 
 ## Development
 
@@ -166,7 +173,19 @@ npm test
 npm run check
 ```
 
-Copy `.env.example` into `.env.local` for local web development. Apply the migrations under `supabase/migrations` in order, then configure the same three variables in Vercel. `SUPABASE_SECRET_KEY` is server-only: set it in Vercel and never in a public file.
+Create a D1 database and apply the Worker migration:
+
+```sh
+npx wrangler d1 create rigdrop
+# Copy the returned database_id into wrangler.toml.
+npx wrangler d1 execute rigdrop --remote --file=migrations/0001_bundles.sql
+npx wrangler secret put PASSCODE_SECRET
+npx wrangler secret put SUPABASE_URL
+npx wrangler secret put SUPABASE_PUBLISHABLE_KEY
+npx wrangler deploy
+```
+
+Set `AGENT_SETUP_REGISTRY_URL` to the deployed Worker URL before using the CLI, or pass it to `rigdrop login --registry URL`. `PASSCODE_SECRET` must be a long random secret and is only used to derive private-bundle passcode digests. The Supabase values remain limited to Google sign-in; bundle configs now live in D1.
 
 Supabase Auth setup:
 
@@ -175,16 +194,16 @@ Supabase Auth setup:
 
 ## Hosted architecture
 
-- Vercel serves the website, public pages, and server functions.
+- Cloudflare Workers serves the API and agent-readable bundle endpoints from one deployment.
 - Supabase Auth identifies the publisher through Google sign-in.
-- Supabase stores immutable bundle manifests and review reports with RLS enabled.
-- Only the publishing API inserts bundles, after it verifies the user and passes the server review.
-- RLS lets only the owner delete a bundle. Reads are public and do not expose the owner.
-- Public pages expose HTML, JSON, review JSON, and Markdown from the same bundle ID.
+- Cloudflare D1 stores immutable bundle manifests and review reports; owner IDs permit owner-only deletion.
+- Public bundles expose JSON, review JSON, and Markdown from the same bundle ID. Private bundles require a passcode on every configuration endpoint.
 
 ## Project status
 
-This is an MVP for personal projects and trusted teams. It does not sync live sessions, install arbitrary binaries, or translate agent-specific plugin formats.
+RigDrop began as a weekend side project for sharing a personal agent setup. It quickly became clear that the same idea could be a shared team memory: one registry for the skills, plugins, rules, and agent configuration a team relies on.
+
+This is still an MVP for personal projects and trusted teams. It does not sync live sessions, install arbitrary binaries, or translate agent-specific plugin formats—but there is much more to come.
 
 ## License
 

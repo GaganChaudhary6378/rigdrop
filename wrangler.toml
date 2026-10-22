@@ -1,0 +1,8 @@
+name = "rigdrop"
+main = "worker/index.js"
+compatibility_date = "2025-01-01"
+
+[[d1_databases]]
+binding = "BUNDLES"
+database_name = "rigdrop"
+database_id = "1819252d-ed23-48a6-9c2a-609465e42713"

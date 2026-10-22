@@ -20,6 +20,7 @@ const value = name => {
 const has = name => args.includes(name);
 const values = name => args.flatMap((arg, index) => arg === name && args[index + 1] ? args[index + 1].split(",").map(part => part.trim()).filter(Boolean) : []);
 const json = has("--json");
+const passcode = () => value("--passcode");
 
 function summary(bundle) {
   console.log(`${bundle.metadata.title}\n${bundle.items.length} item(s), ${bundle.requiredSecrets.length} required secret(s)`);
@@ -119,7 +120,18 @@ async function main() {
         prompt.close();
       }
     }
-    const page = await publishBundle(bundle, { registry: session.registry, token: session.accessToken });
+    let access = has("--private") ? "private" : "public";
+    let privatePasscode = passcode();
+    if (!has("--yes")) {
+      const prompt = createInterface({ input: stdin, output: stdout });
+      try {
+        const selected = (await prompt.question("Share publicly (no password) or privately (passcode required)? [public/private] ")).trim().toLowerCase();
+        access = selected === "private" ? "private" : "public";
+        if (access === "private" && !privatePasscode) privatePasscode = await prompt.question("Passcode for teammates: ");
+      } finally { prompt.close(); }
+    }
+    if (access === "private" && !privatePasscode) throw new Error("Use --passcode PASSWORD with --private and --yes");
+    const page = await publishBundle(bundle, { registry: session.registry, token: session.accessToken, access, passcode: privatePasscode });
     if (json) {
       console.log(JSON.stringify({ page, instructions: `${page}/AGENT_SETUP.md`, publisher: session.email }));
       return;
@@ -129,10 +141,10 @@ async function main() {
     return;
   }
   if (command === "inspect") {
-    const bundle = await loadBundle(input);
+    const bundle = await loadBundle(input, { passcode: passcode() });
     summary(bundle);
     if (/^https?:/.test(input)) {
-      const response = await fetch(`${input.replace(/\/(?:manifest\.json)?$/, "")}/review.json`);
+      const response = await fetch(`${input.replace(/\/(?:manifest\.json)?$/, "")}/review.json`, { headers: passcode() ? { "X-RigDrop-Passcode": passcode() } : {} });
       const review = response.ok ? await response.json() : { status: "unavailable" };
       console.log(`\nServer review: ${review.status}`);
       for (const warning of review.warnings || []) console.log(`- ${warning}`);
@@ -141,7 +153,7 @@ async function main() {
     return;
   }
   if (command === "install") {
-    const bundle = await loadBundle(input);
+    const bundle = await loadBundle(input, { passcode: passcode() });
     summary(bundle);
     const exclude = values("--exclude");
     console.log("\nPlan:");
@@ -175,7 +187,7 @@ async function main() {
   }
   if (command === "publish") {
     const session = await currentSession({ registry: value("--registry") });
-    console.log(await publish(input, { registry: session.registry, token: session.accessToken }));
+    console.log(await publish(input, { registry: session.registry, token: session.accessToken, access: has("--private") ? "private" : "public", passcode: passcode() }));
     return;
   }
   if (command === "unpublish") {
@@ -209,7 +221,7 @@ async function main() {
     }
     return;
   }
-  console.log("RigDrop\n\nCommands:\n  login [--registry URL]\n  logout\n  whoami\n  share [--project PATH] [--title NAME] [--registry URL] [--exclude ID_OR_PATH] [--yes] [--dry-run] [--json]\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL [--files]\n  install FILE_OR_URL [--project PATH] [--exclude ITEM_ID] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  publish BUNDLE_FILE [--registry URL]\n  unpublish BUNDLE_URL\n  add-skill\n  doctor");
+  console.log("RigDrop\n\nCommands:\n  login [--registry URL]\n  logout\n  whoami\n  share [--project PATH] [--title NAME] [--registry URL] [--exclude ID_OR_PATH] [--private --passcode PASSWORD] [--yes] [--dry-run] [--json]\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL [--passcode PASSWORD] [--files]\n  install FILE_OR_URL [--passcode PASSWORD] [--project PATH] [--exclude ITEM_ID] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  publish BUNDLE_FILE [--registry URL] [--private --passcode PASSWORD]\n  unpublish BUNDLE_URL\n  add-skill\n  doctor");
 }
 
 main().catch(error => {

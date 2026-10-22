@@ -5,7 +5,7 @@ import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-export const DEFAULT_REGISTRY = process.env.AGENT_SETUP_REGISTRY_URL || "https://agent-setup-link.vercel.app";
+export const DEFAULT_REGISTRY = process.env.AGENT_SETUP_REGISTRY_URL || "https://rigdrop.rigdrop.workers.dev";
 // Fixed so the Supabase redirect allow list can name it exactly.
 export const LOGIN_PORT = 53682;
 const LOGIN_TIMEOUT = 5 * 60 * 1000;
