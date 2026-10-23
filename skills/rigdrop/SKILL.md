@@ -18,8 +18,12 @@ The user interacts only through `/rigdrop`; run any required RigDrop commands yo
 
 1. Run `npx --yes github:GaganChaudhary6378/rigdrop whoami`. If it says `Not signed in`, run `npx --yes github:GaganChaudhary6378/rigdrop login` and tell the user to finish Google sign-in in the browser.
 2. Run `npx --yes github:GaganChaudhary6378/rigdrop share --dry-run --json`, adding `--title "<title>"` if supplied and `--exclude <ignored-name,...>` for names ignored in this conversation.
-3. Summarize sources, uploaded local files, skipped files, rules, MCP servers, and upload size. Rules and MCP servers can contain personal preferences; call them out explicitly.
-4. Ask for approval before publishing. When approved, run the same command with `--yes --json` instead of `--dry-run`. Give the returned page link and tell the recipient to run `/rigdrop review <page>`.
+3. Show a **Bundle preview** before asking to publish. List every bundled skill by its name, grouped into:
+   - **Install sources:** each source name plus the skills/plugins it installs. These are installed together, so excluding a source excludes everything listed under it.
+   - **Local skills:** every item whose `kind` is `skill`, with its exact name and agent. These can be excluded one by one.
+   Then list rules, MCP servers, uploaded local files, skipped files, and total upload size. Rules and MCP servers can contain personal preferences; call them out explicitly.
+4. End the preview with: `To remove local skills, use /rigdrop ignore <skill-name...>, then run /rigdrop share again. Reply approve to publish this preview.` Do not publish before an explicit `approve`.
+5. When approved, run the same command with `--yes --json` instead of `--dry-run`. Give the returned page link and tell the recipient to run `/rigdrop review <page>`.
 
 ## `/rigdrop review <rigdrop-url>`
 

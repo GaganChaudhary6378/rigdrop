@@ -40,8 +40,8 @@ Then use plain language in the Claude Code CLI or IDE extension, or in Codex:
 
 | You say | The agent does |
 |---|---|
-| `/rigdrop share` | Signs you in if needed, shows the grouped list, removes the skill names you ignored, publishes after approval, and gives you the link |
-| `/rigdrop ignore skill-a skill-b` | Keeps those named skills out of a later `/rigdrop share` in this chat; no file numbers are needed |
+| `/rigdrop share` | Signs you in if needed and shows every bundled skill, grouped as install sources and local skills, before publishing after approval |
+| `/rigdrop ignore skill-a skill-b` | Keeps named local skills out of a later `/rigdrop share` in this chat; no file numbers are needed |
 | `/rigdrop review https://rigdrop.rigdrop.workers.dev/s/ID` | Reviews the files, commands, and sources, gives a verdict, and installs after you approve |
 
 ## Install sources
