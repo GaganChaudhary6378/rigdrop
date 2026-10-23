@@ -10,7 +10,7 @@ import { promisify } from "node:util";
 import { gunzipSync, gzipSync } from "node:zlib";
 import worker from "../worker/index.js";
 import { currentSession, login, LOGIN_PORT, securePasscode } from "../src/auth.js";
-import { bundleDigest, bundleReview, excludeFromBundle, install, omitBundleFiles, reviewBundle, rollback, scan, sha256, share, validate } from "../src/core.js";
+import { bundleDigest, bundleReview, excludeFromBundle, install, loadBundle, omitBundleFiles, reviewBundle, rollback, scan, sha256, share, validate } from "../src/core.js";
 import { commandText } from "../src/sources.js";
 import { bundleUrls, renderBundlePage, renderInstructions } from "../src/hosted.js";
 
@@ -363,6 +363,16 @@ test("private publishing collects its passcode through a local password form", a
   const submitted = await fetch(promptUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "passcode=private-passcode" });
   assert.equal(submitted.status, 200);
   assert.equal(await result, "private-passcode");
+});
+
+test("loading a private bundle identifies a missing passcode", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response(null, { status: 401 });
+  try {
+    await assert.rejects(loadBundle("https://example.com/s/private"), error => error.code === "PASSCODE_REQUIRED");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 

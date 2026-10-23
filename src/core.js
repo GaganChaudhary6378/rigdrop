@@ -360,7 +360,11 @@ export async function loadBundle(input, { passcode } = {}) {
   let url = input;
   if (/\/s\/[0-9a-f]{32}\/?$/i.test(url)) url = `${url.replace(/\/$/, "")}/manifest.json`;
   const response = await fetch(url, { headers: { "User-Agent": "agent-setup-link", ...(passcode ? { "X-RigDrop-Passcode": passcode } : {}) } });
-  if (!response.ok) throw new Error(response.status === 401 ? "This private bundle needs its passcode. Use --passcode PASSWORD." : `Download failed: ${response.status}`);
+  if (!response.ok) {
+    const error = new Error(response.status === 401 ? "This private bundle needs its passcode." : `Download failed: ${response.status}`);
+    if (response.status === 401) error.code = "PASSCODE_REQUIRED";
+    throw error;
+  }
   return validate(await response.json());
 }
 

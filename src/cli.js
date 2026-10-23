@@ -71,6 +71,17 @@ function selectedNumbers(answer, files) {
   return [...indexes].map(index => files[index].path);
 }
 
+async function loadWithPasscode(input) {
+  let supplied = passcode();
+  try {
+    return { bundle: await loadBundle(input, { passcode: supplied }), passcode: supplied };
+  } catch (error) {
+    if (error.code !== "PASSCODE_REQUIRED" || supplied || !/^https?:/.test(input)) throw error;
+    supplied = await securePasscode();
+    return { bundle: await loadBundle(input, { passcode: supplied }), passcode: supplied };
+  }
+}
+
 async function main() {
   if (command === "scan") {
     const out = value("--out") || "agent-setup.bundle.json";
@@ -141,10 +152,11 @@ async function main() {
     return;
   }
   if (command === "inspect") {
-    const bundle = await loadBundle(input, { passcode: passcode() });
+    const loaded = await loadWithPasscode(input);
+    const bundle = loaded.bundle;
     summary(bundle);
     if (/^https?:/.test(input)) {
-      const response = await fetch(`${input.replace(/\/(?:manifest\.json)?$/, "")}/review.json`, { headers: passcode() ? { "X-RigDrop-Passcode": passcode() } : {} });
+      const response = await fetch(`${input.replace(/\/(?:manifest\.json)?$/, "")}/review.json`, { headers: loaded.passcode ? { "X-RigDrop-Passcode": loaded.passcode } : {} });
       const review = response.ok ? await response.json() : { status: "unavailable" };
       console.log(`\nServer review: ${review.status}`);
       for (const warning of review.warnings || []) console.log(`- ${warning}`);
@@ -153,7 +165,7 @@ async function main() {
     return;
   }
   if (command === "install") {
-    const bundle = await loadBundle(input, { passcode: passcode() });
+    const { bundle } = await loadWithPasscode(input);
     summary(bundle);
     const exclude = values("--exclude");
     console.log("\nPlan:");

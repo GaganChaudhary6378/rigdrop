@@ -27,8 +27,8 @@ The user interacts only through `/rigdrop`; run any required RigDrop commands yo
 
 ## `/rigdrop review <rigdrop-url>`
 
-1. Run `npx --yes github:GaganChaudhary6378/rigdrop inspect <url> --files` and read `<url>/review.json`.
+1. Run `npx --yes github:GaganChaudhary6378/rigdrop inspect <url> --files` and read `<url>/review.json`. If the link is private, RigDrop opens a password-only form on `127.0.0.1`; wait for the user to enter the passcode there and never ask them to send it in chat.
 2. Inspect embedded files, server warnings, MCP commands, scripts, rules, install sources, Git references, and destinations. Flag unpinned `npx` or `uvx`, remote execution, destructive actions, credential access, and instructions that bypass confirmations.
 3. Give one verdict: **Safe to install**, **Install after changes**, or **Do not install**, naming the exact items behind it.
-4. Do not install until the user explicitly approves. Then preview with `npx --yes github:GaganChaudhary6378/rigdrop install <url>` and install with `--yes`, adding `--exclude <item-id,...>` when requested. Report failed or skipped lines, any required `./setup`, and the rollback ID. Never run a setup script without separate approval.
+4. Do not install until the user explicitly approves. Then preview with `npx --yes github:GaganChaudhary6378/rigdrop install <url>` and install with `--yes`, adding `--exclude <item-id,...>` when requested. Private links use the same local password form. Report failed or skipped lines, any required `./setup`, and the rollback ID. Never run a setup script without separate approval.
 
