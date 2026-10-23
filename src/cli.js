@@ -210,7 +210,7 @@ async function main() {
     return;
   }
   if (command === "add-skill") {
-    for (const name of ["rigdrop-share", "rigdrop-review"]) {
+    for (const name of ["rigdrop"]) {
       const source = join(dirname(fileURLToPath(import.meta.url)), "../skills", name);
       for (const root of [".claude/skills", ".codex/skills"]) {
         const target = join(homedir(), root, name);
@@ -221,7 +221,7 @@ async function main() {
     }
     return;
   }
-  console.log("RigDrop\n\nCommands:\n  login [--registry URL]\n  logout\n  whoami\n  share [--project PATH] [--title NAME] [--registry URL] [--exclude ID_OR_PATH] [--private --passcode PASSWORD] [--yes] [--dry-run] [--json]\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL [--passcode PASSWORD] [--files]\n  install FILE_OR_URL [--passcode PASSWORD] [--project PATH] [--exclude ITEM_ID] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  publish BUNDLE_FILE [--registry URL] [--private --passcode PASSWORD]\n  unpublish BUNDLE_URL\n  add-skill\n  doctor");
+  console.log("RigDrop\n\nCommands:\n  login [--registry URL]\n  logout\n  whoami\n  share [--project PATH] [--title NAME] [--registry URL] [--exclude ID_OR_NAME_OR_PATH] [--private --passcode PASSWORD] [--yes] [--dry-run] [--json]\n  scan [--project PATH] [--out FILE] [--title NAME]\n  inspect FILE_OR_URL [--passcode PASSWORD] [--files]\n  install FILE_OR_URL [--passcode PASSWORD] [--project PATH] [--exclude ITEM_ID] [--yes] [--force]\n  rollback INSTALLATION_ID [--project PATH]\n  publish BUNDLE_FILE [--registry URL] [--private --passcode PASSWORD]\n  unpublish BUNDLE_URL\n  add-skill\n  doctor");
 }
 
 main().catch(error => {

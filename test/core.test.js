@@ -425,6 +425,7 @@ test("scan groups skills and plugins by install source", async () => {
   assert.deepEqual(embedded, ["own"]);
   assert.equal(reviewBundle(bundle).status, "passed");
   assert.deepEqual(excludeFromBundle(bundle, ["git-clone-tool", ".claude/skills/own/SKILL.md"]).items.map(item => item.id).filter(id => id.includes("tool") || id.includes("own")), []);
+  assert.deepEqual(excludeFromBundle(bundle, ["own"]).items.filter(item => item.name === "own"), []);
   assert.throws(() => excludeFromBundle(bundle, ["missing"]), /Nothing matches/);
 });
 

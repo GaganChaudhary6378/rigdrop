@@ -17,7 +17,7 @@ The CLI finds how each skill and plugin was installed and shares the install sou
 - Roll back an installation from its local journal.
 - Sign in with Google, publish a bundle you own, and unpublish it later.
 - Re-check every uploaded bundle on the server and publish a review report with it.
-- Review a shared link from Claude Code or Codex with the `/rigdrop-review` skill.
+- Review a shared link from Claude Code or Codex with `/rigdrop review`.
 - Install from a public URL without an account.
 
 No bundle scripts are executed. Secret values are never written into a bundle.
@@ -30,7 +30,7 @@ No bundle scripts are executed. Secret values are never written into a bundle.
 
 ## Use RigDrop from your agent
 
-Install the two RigDrop skills once for Claude Code and Codex:
+Install the RigDrop skill once for Claude Code and Codex:
 
 ```sh
 npx --yes github:GaganChaudhary6378/rigdrop add-skill
@@ -40,8 +40,9 @@ Then use plain language in the Claude Code CLI or IDE extension, or in Codex:
 
 | You say | The agent does |
 |---|---|
-| "Share my setup" or `/rigdrop-share` | Signs you in if needed, shows the grouped list, removes what you name, publishes, and gives you the link |
-| "Install this setup: https://rigdrop.rigdrop.workers.dev/s/ID" or `/rigdrop-review URL` | Reviews the files, commands, and sources, gives a verdict, and installs after you approve |
+| `/rigdrop share` | Signs you in if needed, shows the grouped list, removes the skill names you ignored, publishes after approval, and gives you the link |
+| `/rigdrop ignore skill-a skill-b` | Keeps those named skills out of a later `/rigdrop share` in this chat; no file numbers are needed |
+| `/rigdrop review https://rigdrop.rigdrop.workers.dev/s/ID` | Reviews the files, commands, and sources, gives a verdict, and installs after you approve |
 
 ## Install sources
 
@@ -96,7 +97,7 @@ Remove a bundle you published:
 npx --yes github:GaganChaudhary6378/rigdrop unpublish https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID
 ```
 
-Before upload, `share` lists the install sources, every included file, its size, the total upload size, Git references, and excluded paths. Use `e` to remove file numbers for that one share, `--exclude ITEM_ID_OR_PATH` to remove items or files without a prompt, `--dry-run` to review without upload, or `--yes` for a noninteractive upload. Add `--json` for output that an agent can read.
+Before upload, `share` lists the install sources, every included file, its size, the total upload size, Git references, and excluded paths. Use `e` to remove file numbers for that one share, `--exclude ITEM_ID_OR_NAME_OR_PATH` to remove items or files without a prompt, `--dry-run` to review without upload, or `--yes` for a noninteractive upload. Add `--json` for output that an agent can read.
 
 Anyone with the link can read embedded local files, so use the advanced two-step flow when you want to inspect before publishing:
 
@@ -108,16 +109,10 @@ npx --yes github:GaganChaudhary6378/rigdrop publish team.bundle.json
 
 ## Review a shared setup with an agent
 
-Install the review skill once for Claude Code and Codex:
-
-```sh
-npx --yes github:GaganChaudhary6378/rigdrop add-skill
-```
-
-Then, in Claude Code:
+Then, in Claude Code or Codex:
 
 ```text
-/rigdrop-review https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID
+/rigdrop review https://rigdrop.rigdrop.workers.dev/s/BUNDLE_ID
 ```
 
 In Codex, ask it to review the RigDrop link. The skill reads the files, the server review report (`/s/BUNDLE_ID/review.json`), MCP commands, scripts, and rules, then gives a verdict. It installs nothing without your approval.

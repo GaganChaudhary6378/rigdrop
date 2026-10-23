@@ -326,14 +326,15 @@ function seal(bundle) {
   return { ...body, integrity: { sha256: bundleDigest(body) } };
 }
 
-// Removes whole items by ID and single files by review path.
+// Removes whole items by ID or name and single files by review path.
 export function excludeFromBundle(bundle, selections) {
   if (!selections.length) return bundle;
   const ids = new Set(bundle.items.map(item => item.id));
+  const names = new Set(bundle.items.map(item => item.name));
   const paths = new Set(bundleReview(bundle).files.map(file => file.path));
-  const unknown = selections.filter(selection => !ids.has(selection) && !paths.has(selection));
+  const unknown = selections.filter(selection => !ids.has(selection) && !names.has(selection) && !paths.has(selection));
   if (unknown.length) throw new Error(`Nothing matches --exclude ${unknown.join(", ")}`);
-  const next = seal({ ...bundle, items: bundle.items.filter(item => !selections.includes(item.id)) });
+  const next = seal({ ...bundle, items: bundle.items.filter(item => !selections.includes(item.id) && !selections.includes(item.name)) });
   return omitBundleFiles(next, selections.filter(selection => paths.has(selection)));
 }
 
