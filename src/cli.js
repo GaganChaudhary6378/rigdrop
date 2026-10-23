@@ -5,7 +5,7 @@ import { createInterface } from "node:readline/promises";
 import { stdin, stdout } from "node:process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { currentSession, DEFAULT_REGISTRY, login, logout, readSession } from "./auth.js";
+import { currentSession, DEFAULT_REGISTRY, login, logout, readSession, securePasscode } from "./auth.js";
 import { bundleReview, doctor, embeddedFiles, ensureBundleFits, excludeFromBundle, install, loadBundle, omitBundleFiles, plan, publish, publishBundle, rollback, scan, unpublish } from "./core.js";
 import { commandText, sourceCommands, sourceCount } from "./sources.js";
 
@@ -130,7 +130,7 @@ async function main() {
         if (access === "private" && !privatePasscode) privatePasscode = await prompt.question("Passcode for teammates: ");
       } finally { prompt.close(); }
     }
-    if (access === "private" && !privatePasscode) throw new Error("Use --passcode PASSWORD with --private and --yes");
+    if (access === "private" && !privatePasscode) privatePasscode = await securePasscode();
     const page = await publishBundle(bundle, { registry: session.registry, token: session.accessToken, access, passcode: privatePasscode });
     if (json) {
       console.log(JSON.stringify({ page, instructions: `${page}/AGENT_SETUP.md`, publisher: session.email }));

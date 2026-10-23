@@ -40,7 +40,7 @@ Then use plain language in the Claude Code CLI or IDE extension, or in Codex:
 
 | You say | The agent does |
 |---|---|
-| `/rigdrop share` | Signs you in if needed and shows every bundled skill, grouped as install sources and local skills, before publishing after approval |
+| `/rigdrop share` | Signs you in if needed, previews every bundled skill, then asks whether to publish a public or private link |
 | `/rigdrop ignore skill-a skill-b` | Keeps named local skills out of a later `/rigdrop share` in this chat; no file numbers are needed |
 | `/rigdrop review https://rigdrop.rigdrop.workers.dev/s/ID` | Reviews the files, commands, and sources, gives a verdict, and installs after you approve |
 
@@ -82,7 +82,7 @@ npx --yes github:GaganChaudhary6378/rigdrop share --project /path/to/project --t
 
 `login` opens Google sign-in in the browser and receives the result on `http://127.0.0.1:53682/callback`. The session is stored in `~/.rigdrop/session.json` (mode `0600`) and refreshes automatically. It never enters a bundle. Use `whoami` to check the account and `logout` to end the session.
 
-`share` scans the setup, lets you choose **public** (no password) or **private** (a team passcode), publishes it under your account, prints one unique link, then removes the temporary bundle. Private bundles require the passcode for the manifest, review, and instructions endpoints; D1 stores an HMAC digest, never the passcode. The server repeats bundle validation and rejects malformed uploads. Each account can publish 20 bundles in 24 hours.
+`share` scans the setup, lets you choose **public** (no password) or **private** (a team passcode), publishes it under your account, prints one unique link, then removes the temporary bundle. When an agent publishes privately, RigDrop opens a password-only form on `127.0.0.1`, so the passcode stays out of the chat and command line. Private bundles require the passcode for the manifest, review, and instructions endpoints; D1 stores an HMAC digest, never the passcode. The server repeats bundle validation and rejects malformed uploads. Each account can publish 20 bundles in 24 hours.
 
 For an automated private share, provide the mode and passcode explicitly:
 

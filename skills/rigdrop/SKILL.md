@@ -22,8 +22,8 @@ The user interacts only through `/rigdrop`; run any required RigDrop commands yo
    - **Install sources:** each source name plus the skills/plugins it installs. These are installed together, so excluding a source excludes everything listed under it.
    - **Local skills:** every item whose `kind` is `skill`, with its exact name and agent. These can be excluded one by one.
    Then list rules, MCP servers, uploaded local files, skipped files, and total upload size. Rules and MCP servers can contain personal preferences; call them out explicitly.
-4. End the preview with: `To remove local skills, use /rigdrop ignore <skill-name...>, then run /rigdrop share again. Reply approve to publish this preview.` Do not publish before an explicit `approve`.
-5. When approved, run the same command with `--yes --json` instead of `--dry-run`. Give the returned page link and tell the recipient to run `/rigdrop review <page>`.
+4. Ask whether the link should be **public** or **private**. Never assume public. End the preview with: `To remove local skills, use /rigdrop ignore <skill-name...>, then run /rigdrop share again. Reply approve public or approve private to publish this preview.` Do not publish before that explicit approval.
+5. For `approve public`, run the same command with `--yes --json` instead of `--dry-run`. For `approve private`, add `--private`; RigDrop opens a password-only form on `127.0.0.1` for the user to enter a passcode. Never ask the user to send the passcode in chat or include it in a command. Give the returned page link and tell the recipient to run `/rigdrop review <page>`.
 
 ## `/rigdrop review <rigdrop-url>`
 

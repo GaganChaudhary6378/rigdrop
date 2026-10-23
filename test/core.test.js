@@ -9,7 +9,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import { gunzipSync, gzipSync } from "node:zlib";
 import worker from "../worker/index.js";
-import { currentSession, login, LOGIN_PORT } from "../src/auth.js";
+import { currentSession, login, LOGIN_PORT, securePasscode } from "../src/auth.js";
 import { bundleDigest, bundleReview, excludeFromBundle, install, omitBundleFiles, reviewBundle, rollback, scan, sha256, share, validate } from "../src/core.js";
 import { commandText } from "../src/sources.js";
 import { bundleUrls, renderBundlePage, renderInstructions } from "../src/hosted.js";
@@ -352,6 +352,17 @@ test("login uses a PKCE loopback callback and refreshes the stored session", { s
   } finally {
     server.close();
   }
+});
+
+test("private publishing collects its passcode through a local password form", async () => {
+  let promptUrl;
+  const result = securePasscode({ open: url => { promptUrl = url; }, log: () => {} });
+  while (!promptUrl) await new Promise(resolve => setTimeout(resolve, 1));
+  const page = await fetch(promptUrl);
+  assert.match(await page.text(), /type="password"/);
+  const submitted = await fetch(promptUrl, { method: "POST", headers: { "Content-Type": "application/x-www-form-urlencoded" }, body: "passcode=private-passcode" });
+  assert.equal(submitted.status, 200);
+  assert.equal(await result, "private-passcode");
 });
 
 

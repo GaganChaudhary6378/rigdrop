@@ -19,6 +19,50 @@ function openBrowser(url) {
   execFile(command, args, () => {});
 }
 
+export function securePasscode({ open = openBrowser, log = console.log } = {}) {
+  return new Promise((resolvePasscode, reject) => {
+    const token = randomBytes(32).toString("base64url");
+    let timer;
+    const close = () => {
+      clearTimeout(timer);
+      server.close();
+    };
+    const server = createServer((request, response) => {
+      const url = new URL(request.url, "http://127.0.0.1");
+      if (url.searchParams.get("token") !== token) return response.writeHead(403).end();
+      if (request.method === "GET" && url.pathname === "/") {
+        return response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; base-uri 'none'" }).end(`<!doctype html><title>RigDrop private link</title><form method="post"><label>Passcode for this private link <input name="passcode" type="password" minlength="8" autocomplete="new-password" required autofocus></label><button>Protect link</button></form>`);
+      }
+      if (request.method !== "POST" || url.pathname !== "/") return response.writeHead(404).end();
+      let body = "";
+      request.on("data", chunk => {
+        body += chunk;
+        if (body.length > 8192) request.destroy();
+      });
+      request.on("end", () => {
+        const passcode = new URLSearchParams(body).get("passcode") || "";
+        if (passcode.length < 8) return response.writeHead(400).end("Passcode must be at least 8 characters.");
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8" }).end("<!doctype html><title>RigDrop</title><p>Private link protected. Return to your agent.</p>");
+        close();
+        resolvePasscode(passcode);
+      });
+    });
+    timer = setTimeout(() => {
+      close();
+      reject(new Error("Private passcode entry timed out"));
+    }, LOGIN_TIMEOUT);
+    server.on("error", error => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const url = `http://127.0.0.1:${server.address().port}/?token=${token}`;
+      log(`Opening a local passcode form. If it does not open, visit:\n${url}`);
+      open(url);
+    });
+  });
+}
+
 async function authConfig(registry) {
   const response = await fetch(`${registry}/api/auth-config`);
   if (!response.ok) throw new Error(`Registry sign-in is unavailable (${response.status})`);
